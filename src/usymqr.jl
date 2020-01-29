@@ -32,6 +32,8 @@ USYMQR finds the minimum-norm solution if problems are inconsistent.
 This version of USYMQR works in any floating-point data type.
 """
 function usymqr(A :: AbstractLinearOperator{T}, b :: AbstractVector{T}, c :: AbstractVector{T};
+                M :: AbstractLinearOperator=opEye(),
+                N :: AbstractLinearOperator=opEye(),
                 atol :: T=√eps(T), rtol :: T=√eps(T),
                 itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
@@ -42,6 +44,10 @@ function usymqr(A :: AbstractLinearOperator{T}, b :: AbstractVector{T}, c :: Abs
 
   # Compute the adjoint of A
   Aᵀ = A'
+
+  # Tests M == Iₘ and N == Iₙ
+  MisI = isa(M, opEye)
+  NisI = isa(N, opEye)
 
   # Initial solution x₀ and residual norm ‖r₀‖.
   x = zeros(T, n)
@@ -58,13 +64,28 @@ function usymqr(A :: AbstractLinearOperator{T}, b :: AbstractVector{T}, c :: Abs
   verbose && @printf("%5s  %7s  %7s\n", "k", "‖rₖ‖", "‖Aᵀrₖ₋₁‖")
   verbose && @printf("%5d  %7.1e  %7s\n", iter, rNorm, "✗ ✗ ✗ ✗")
 
+  # Initialize the orthogonal tridiagonalization process.
+  # β₁Mv₁ = b.
+  Mvₖ = copy(b)
+  vₖ  = M * Mvₖ                  # v₁ = M⁻¹ * Mv₁
+  βₖ  = sqrt(@kdot(m, vₖ, Mvₖ))  # β₁ = ‖v₁‖_M
+  if βₖ ≠ 0
+    @kscal!(m, 1 / βₖ, vₖ)
+    MisI || @kscal!(m, 1 / βₖ, Mvₖ)
+  end
+
+  # γ₁Nv₁ = c.
+  Nuₖ = copy(c)
+  uₖ  = N * Nuₖ                  # u₁ = N⁻¹ * Nu₁
+  γₖ  = sqrt(@kdot(n, uₖ, Nuₖ))  # γ₁ = ‖u₁‖_N
+  if γₖ ≠ 0
+    @kscal!(n, 1 / γₖ, uₖ)
+    NisI || @kscal!(n, 1 / γₖ, Nuₖ)
+  end
+
   # Set up workspace.
-  βₖ = @knrm2(m, b)           # β₁ = ‖v₁‖
-  γₖ = @knrm2(n, c)           # γ₁ = ‖u₁‖
-  vₖ₋₁ = zeros(T, m)          # v₀ = 0
-  uₖ₋₁ = zeros(T, n)          # u₀ = 0
-  vₖ = b / βₖ                 # v₁ = b / β₁
-  uₖ = c / γₖ                 # u₁ = c / γ₁
+  Mvₖ₋₁ = zeros(T, m)         # v₀ = 0
+  Nuₖ₋₁ = zeros(T, n)         # u₀ = 0
   cₖ₋₂ = cₖ₋₁ = cₖ = zero(T)  # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
   sₖ₋₂ = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
   wₖ₋₂ = zeros(T, n)          # Column k-2 of Wₖ = Uₖ(Rₖ)⁻¹
@@ -81,23 +102,25 @@ function usymqr(A :: AbstractLinearOperator{T}, b :: AbstractVector{T}, c :: Abs
     # Update iteration index.
     iter = iter + 1
 
-    # Continue the SSY tridiagonalization process.
-    # AUₖ  = VₖTₖ    + βₖ₊₁vₖ₊₁(eₖ)ᵀ = Vₖ₊₁Tₖ₊₁.ₖ
-    # AᵀVₖ = Uₖ(Tₖ)ᵀ + γₖ₊₁uₖ₊₁(eₖ)ᵀ = Uₖ₊₁(Tₖ.ₖ₊₁)ᵀ
+    # Continue the orthogonal tridiagonalization process.
+    # AUₖ  = MVₖTₖ    + βₖ₊₁Mvₖ₊₁(eₖ)ᵀ = MVₖ₊₁Tₖ₊₁.ₖ
+    # AᵀVₖ = NUₖ(Tₖ)ᵀ + γₖ₊₁Nuₖ₊₁(eₖ)ᵀ = NUₖ₊₁(Tₖ.ₖ₊₁)ᵀ
 
-    q = A  * uₖ  # Forms vₖ₊₁ : q ← Auₖ
-    p = Aᵀ * vₖ  # Forms uₖ₊₁ : p ← Aᵀvₖ
+    q = A  * uₖ  # Forms Mvₖ₊₁ : q ← Auₖ
+    p = Aᵀ * vₖ  # Forms Nuₖ₊₁ : p ← Aᵀvₖ
 
-    @kaxpy!(m, -γₖ, vₖ₋₁, q) # q ← q - γₖ * vₖ₋₁
-    @kaxpy!(n, -βₖ, uₖ₋₁, p) # p ← p - βₖ * uₖ₋₁
+    @kaxpy!(m, -γₖ, Mvₖ₋₁, q) # q ← q - γₖ * Mvₖ₋₁
+    @kaxpy!(n, -βₖ, Nuₖ₋₁, p) # p ← p - βₖ * Nuₖ₋₁
 
-    αₖ = @kdot(m, vₖ, q)     # αₖ = qᵀvₖ
+    αₖ = @kdot(m, vₖ, q)      # αₖ = qᵀvₖ
 
-    @kaxpy!(m, -αₖ, vₖ, q)   # q ← q - αₖ * vₖ
-    @kaxpy!(n, -αₖ, uₖ, p)   # p ← p - αₖ * uₖ
+    @kaxpy!(m, -αₖ, Mvₖ, q)   # q ← q - αₖ * Mvₖ
+    @kaxpy!(n, -αₖ, Nuₖ, p)   # p ← p - αₖ * Nuₖ
 
-    βₖ₊₁ = @knrm2(m, q)      # βₖ₊₁ = ‖q‖
-    γₖ₊₁ = @knrm2(n, p)      # γₖ₊₁ = ‖p‖
+    # Compute βₖ₊₁
+    @. Mvₖ₋₁ = Mvₖ                  # Mvₖ₋₁ ← Mvₖ
+    vₖ₊₁ = M * q                    # vₖ₊₁ = M⁻¹ * Mvₖ₊₁
+    βₖ₊₁ = sqrt(@kdot(m, vₖ₊₁, q))  # βₖ₊₁ = ‖vₖ₊₁‖_M
 
     # Update the QR factorization of Tₖ₊₁.ₖ = Qₖ [ Rₖ ].
     #                                            [ Oᵀ ]
@@ -168,6 +191,11 @@ function usymqr(A :: AbstractLinearOperator{T}, b :: AbstractVector{T}, c :: Abs
       @. wₖ = wₖ / δₖ
     end
 
+    # Compute γₖ₊₁
+    @. Nuₖ₋₁ = Nuₖ                  # Nuₖ₋₁ ← Nuₖ
+    uₖ₊₁ = N * p                    # uₖ₊₁ = N⁻¹ * Nuₖ₊₁
+    γₖ₊₁ = sqrt(@kdot(n, uₖ₊₁, p))  # γₖ₊₁ = ‖uₖ₊₁‖_N
+
     # Compute solution xₖ.
     # xₖ ← xₖ₋₁ + ζₖ * wₖ
     @kaxpy!(n, ζₖ, wₖ, x)
@@ -180,15 +208,18 @@ function usymqr(A :: AbstractLinearOperator{T}, b :: AbstractVector{T}, c :: Abs
     AᵀrNorm = abs(ζbarₖ) * √(δbarₖ^2 + (cₖ₋₁ * γₖ₊₁)^2)
     push!(AᵀrNorms, AᵀrNorm)
 
-    # Compute uₖ₊₁ and uₖ₊₁.
-    @. vₖ₋₁ = vₖ # vₖ₋₁ ← vₖ
-    @. uₖ₋₁ = uₖ # uₖ₋₁ ← uₖ
-
-    if βₖ₊₁ ≠ zero(T)
-      @. vₖ = q / βₖ₊₁ # βₖ₊₁vₖ₊₁ = q
+    # Update vₖ
+    @. vₖ = vₖ₊₁
+    if βₖ₊₁ ≠ 0
+      @kscal!(m, 1 / βₖ₊₁, vₖ)
+      MisI || @kscal!(m, 1 / βₖ₊₁, Mvₖ)
     end
-    if γₖ₊₁ ≠ zero(T)
-      @. uₖ = p / γₖ₊₁ # γₖ₊₁uₖ₊₁ = p
+
+    # Update uₖ
+    @. uₖ = uₖ₊₁
+    if γₖ₊₁ ≠ 0
+      @kscal!(n, 1 / γₖ₊₁, uₖ)
+      NisI || @kscal!(n, 1 / γₖ₊₁, Nuₖ)
     end
 
     # Update directions for x.
