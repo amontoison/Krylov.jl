@@ -1,4 +1,4 @@
-# An implementation of USYMLQR for the solution of unsymmetric linear system Ax = b.
+# An implementation of USYMLQR for the solution of symmetric saddle-point systems.
 #
 # This method is described in
 #
@@ -7,112 +7,110 @@
 # SIAM Journal on Numerical Analysis, 25(4), pp. 927--940, 1988.
 #
 # A. Buttari, D. Orban, D. Ruiz and D. Titley-Peloquin
-# A tridiagonalization method for symmetric saddle-point and quasi-definite systems.
-# Cahier du GERAD G-2018-42, GERAD, Montreal, 2018. doi:10.13140/RG.2.2.26337.20328
+# A tridiagonalization method for symmetric saddle-point systems.
+# SIAM Journal on Scientific Computing, 41(5), pp. 409--432, 2019
 #
 # Dominique Orban, <dominique.orban@gerad.ca>
 # Alexis Montoison, <alexis.montoison@polymtl.ca>
-# Montreal, May 2019.
+# Montréal, May 2019 -- September 2020.
 
 export usymlqr
 
-"""Solve the symmetric saddle-point system
+"""
+Solve the symmetric saddle-point system
 
-    [ I   A ] [ s ] = [ b ]
-    [ Aᵀ    ] [ t ]   [ c ]
+    [ E   A ] [ x ] = [ b ]
+    [ Aᵀ    ] [ y ]   [ c ]
 
-by way of the Saunders-Simon-Yip tridiagonalization using the USYMQR and USYMLQ methods.
+where E = M⁻¹ by way of the Saunders-Simon-Yip tridiagonalization using USYMLQ and USYMQR methods.
 The method solves the least-squares problem
 
-    [ I   A ] [ r ] = [ b ]
-    [ Aᵀ    ] [ x ]   [ 0 ]
+    [ E   A ] [ s ] = [ b ]
+    [ Aᵀ    ] [ t ]   [ 0 ]
 
 and the least-norm problem
 
-    [ I   A ] [ y ] = [ 0 ]
+    [ E   A ] [ w ] = [ 0 ]
     [ Aᵀ    ] [ z ]   [ c ]
 
 and simply adds the solutions.
 
-This version of USYMLQR works in multiprecision.
+    [ M   O ]
+    [ 0   N ]
+
+indicates the weighted norm in which residuals are measured.
+It's the Euclidean norm when `M` and `N` are identity operators.
 """
-function usymlqr(A :: AbstractLinearOperator, b :: AbstractVector{T}, c :: AbstractVector{T};
-                 M :: AbstractLinearOperator=opEye(),
-                 N :: AbstractLinearOperator=opEye(),
-                 atol_ls :: T=√eps(T), rtol_ls :: T=√eps(T),
-                 atol_ln :: T=√eps(T), rtol_ln :: T=√eps(T),
-                 itmax :: Int=0, conlim :: T=1/√eps(T), verbose :: Bool=false) where T <: AbstractFloat
+function usymlqr(A, b :: AbstractVector{T}, c :: AbstractVector{T};
+                 M=opEye(), N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
+                 itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
   m, n = size(A)
   length(b) == m || error("Inconsistent problem size")
   length(c) == n || error("Inconsistent problem size")
-  verbose && @printf("USYMLQR: system of %d equations in %d variables\n", m, n)
+  verbose && @printf("USYMLQR: system of %d equations in %d variables\n", m+n, m+n)
+  
+  # Check M == Iₘ and N == Iₙ
+  MisI = isa(M, opEye)
+  NisI = isa(N, opEye)
 
-  # Exit fast if b or c is zero.
-  bnorm = @knrm2(m, b)
-  bnorm > 0 || error("USYMLQR: b must be nonzero.")
-  cnorm = @knrm2(n, c)
-  cnorm > 0 || error("USYMLQR: c must be nonzero.")
-  ctol = conlim > 0 ? 1/conlim : zero(T)
+  # Check type consistency
+  eltype(A) == T || error("eltype(A) ≠ $T")
+  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
+  NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
+
+  # Compute the adjoint of A
+  Aᵀ = A'
+
+  # Determine the storage type of b
+  S = typeof(b)
+
+  # Initial solutions x₀ and y₀.
+  xₖ = kzeros(S, m)
+  yₖ = kzeros(S, n)
 
   iter = 0
-  itmax == 0 && (itmax = 2*n)
+  itmax == 0 && (itmax = n+m)
 
-  ls_zero_resid_tol = atol_ls + rtol_ls * bnorm
-  ls_optimality_tol = atol_ls + rtol_ls * norm(A.tprod(b)) # FIX ME
-  ln_tol = atol_ln + rtol_ln * cnorm
+  # Initialize preconditioned orthogonal tridiagonalization process.
+  M⁻¹vₖ₋₁ = kzeros(S, m)  # v₀ = 0
+  N⁻¹uₖ₋₁ = kzeros(S, n)  # u₀ = 0
 
-  # Initialize the SSY tridiagonalization.
-  M⁻¹b = M * b
-  N⁻¹c = N * c
-  βₖ = sqrt(@kdot(m, b, M⁻¹b))  # β₁ = ‖u₁‖_M
-  γₖ = sqrt(@kdot(n, c, N⁻¹c))  # γ₁ = ‖v₁‖_N
-  u_prev = zeros(T, m)
-  v_prev = zeros(T, n)
-  u = b / βₖ # u₁
-  v = c / γₖ # v₁
-  q = A * v
-  αₖ = @kdot(m, u, q) # α₁
-  vv = copy(v)
+  # β₁Ev₁ = b ↔ β₁v₁ = Mb
+  M⁻¹vₖ = copy(b)
+  vₖ = M * M⁻¹vₖ
+  βₖ = sqrt(@kdot(m, vₖ, M⁻¹vₖ))  # β₁ = ‖v₁‖_E
+  if βₖ ≠ 0
+    @kscal!(m, 1 / βₖ, M⁻¹vₖ)
+    MisI || @kscal!(m, 1 / βₖ, vₖ)
+  end
 
-  # Initial norm estimates
-  Anorm2 = αₖ * αₖ
-  Anorm = abs(αₖ)
-  sigma_min = sigma_max = αₖ # extreme singular values estimates.
-  Acond = one(T)
+  # γ₁Fu₁ = c ↔ γ₁u₁ = Nb
+  N⁻¹uₖ = copy(c)
+  uₖ = N * N⁻¹uₖ
+  γₖ = sqrt(@kdot(n, uₖ, N⁻¹uₖ))  # γ₁ = ‖u₁‖_F
+  if γₖ ≠ 0
+    @kscal!(n, 1 / γₖ, N⁻¹uₖ)
+    NisI || @kscal!(n, 1 / γₖ, uₖ)
+  end
 
-  # initial residual of least-squares problem
-  ϕbar = βₖ
-  rNorm_qr = ϕbar
-  rNorms_qr = [rNorm_qr]
-  ArNorm_qr = zero(T)  # just so it exists at the end of the loop!
-  ArNorms_qr = T[]
-
-  # initialization for QR factorization of T{k+1,k}
-  cs = -one(T)
-  sn = zero(T)
-  δbar = αₖ
-  λ = zero(T)
-  ϵ = zero(T)
-  η = zero(T)
-
-  verbose && @printf("%4s %8s %7s %7s %7s %7s %7s %7s %7s\n", "iter", "αₖ", "βₖ", "γₖ", "‖A‖", "κ(A)", "‖Ax-b‖", "‖Aᵀr‖", "‖Aᵀy-c‖")
-  verbose && @printf("%4d %8.1e %7.1e %7.1e %7.1e %7.1e %7.1e", iter, αₖ, βₖ, γₖ, Anorm, Acond, rNorm_qr)
+  verbose && @printf("%4s %7s %7s %7s\n", "k", "αₖ", "βₖ", "γₖ")
+  verbose && @printf("%4d %7.1e %7.1e %7.1e\n", iter, αₖ, βₖ, γₖ)
 
   # initialize x and z update directions
-  x = zeros(T, n)
+  x = kzeros(S, n)
   xNorm = zero(T)
-  z = zeros(T, n)
+  z = kzeros(S, n)
   wbar = v / δbar
-  w = zeros(T, n)
-  wold = zeros(T, n)
+  w = kzeros(S, n)
+  wold = kzeros(S, n)
   Wnorm2 = zero(T)
 
   # quantities related to the update of y
   etabar = γₖ / δbar
-  p = zeros(T, m)
+  p = kzeros(S, m)
   pbar = copy(u)
-  y = zeros(T, m)
+  y = kzeros(S, m)
   yC = etabar  * pbar
   zC = -etabar * wbar
 
