@@ -1,10 +1,3 @@
-# A truncated version of Stiefel’s Conjugate Residual method
-# cr(A, b, M, atol, rtol, γ, itmax, radius, verbose, linesearch) solves the linear system 'A * x = b' or the least-squares problem :
-# 'min ‖b - A * x‖²' within a region of fixed radius.
-#
-# Marie-Ange Dahito, <marie-ange.dahito@polymtl.ca>
-# Montreal, QC, June 2017
-
 export cr
 
 """

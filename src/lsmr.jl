@@ -1,27 +1,3 @@
-# An implementation of LSMR for the solution of the
-# over-determined linear least-squares problem
-#
-#  minimize ‖Ax - b‖
-#
-# equivalently, of the normal equations
-#
-#  AᵀAx = Aᵀb.
-#
-# LSMR is formally equivalent to applying MINRES to the normal equations
-# but should be more stable. It is also formally equivalent to CRLS though
-# LSMR should be expected to be more stable on ill-conditioned or poorly
-# scaled problems.
-#
-# This implementation follows the original implementation by
-# Michael Saunders described in
-#
-# D. C.-L. Fong and M. A. Saunders, LSMR: An Iterative Algorithm for Sparse
-# Least Squares Problems, SIAM Journal on Scientific Computing, 33(5),
-# pp. 2950--2971, 2011.
-#
-# Dominique Orban, <dominique.orban@gerad.ca>
-# Montreal, QC, May 2015.
-
 export lsmr
 
 

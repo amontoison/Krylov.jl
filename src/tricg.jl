@@ -1,14 +1,3 @@
-# An implementation of TriCG for the solution of symmetric and quasi-definite systems.
-#
-# This method is described in
-#
-# A. Montoison and D. Orban
-# TriCG and TriMR: Two Iterative Methods for Symmetric Quasi-Definite Systems
-# Cahier du GERAD G-2020-41, GERAD, Montreal, 2020. doi:10.13140/RG.2.2.12344.16645
-#
-# Alexis Montoison, <alexis.montoison@polymtl.ca>
-# Montréal, April 2020.
-
 export tricg
 
 """

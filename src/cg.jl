@@ -1,26 +1,7 @@
-# A standard implementation of the Conjugate Gradient method.
-# The only non-standard point about it is that it does not check
-# that the operator is definite.
-# It is possible to check that the system is inconsistent by
-# monitoring ‖p‖, which would cost an extra norm computation per
-# iteration.
-#
-# Dominique Orban, <dominique.orban@gerad.ca>
-# Salt Lake City, UT, March 2015.
-
 export cg
-
 
 """
     (x, stats) = cg(A, b; M, atol, rtol, itmax, radius, linesearch, verbose)
-
-The conjugate gradient method to solve the symmetric linear system Ax=b.
-
-The method does _not_ abort if A is not definite.
-
-A preconditioner M may be provided in the form of a linear operator and is
-assumed to be symmetric and positive definite.
-M also indicates the weighted norm in which residuals are measured.
 """
 function cg(A, b :: AbstractVector{T};
             M=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),

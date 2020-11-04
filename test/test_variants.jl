@@ -1,10 +1,8 @@
 # Tests of variants.jl
 function test_variants()
   @printf("Tests of variants:\n")
-  for fn in (:cg_lanczos, :cg_lanczos_shift_seq, :cg, :cgls, :cgne, :cr,
-             :craig, :craigmr, :crls, :crmr, :lslq, :lsmr, :bilq, :lsqr,
-             :minres, :symmlq, :dqgmres, :diom, :cgs, :bicgstab, :usymqr,
-             :minres_qlp, :qmr, :usymlq, :bilqr, :tricg, :trimr, :trilqr)
+  for fn in (:cg, :cr, :lnlq, :craig, :craigmr, :lslq, :lsqr, :lsmr,
+             :minres, :symmlq, :minres_qlp, :tricg, :trimr)
     @printf("%s ", string(fn))
     for T in (Float32, Float64, BigFloat)
       for S in (Int32, Int64)
@@ -14,12 +12,7 @@ function test_variants()
         b_sparse = convert(SparseVector{T,S}, b_dense)
         for A in (A_dense, A_sparse)
           for b in (b_dense, b_sparse)
-            if fn == :cg_lanczos_shift_seq
-              shifts = [-one(T), one(T)]
-              @eval $fn($A, $b, $shifts)
-              @eval $fn($transpose($A), $b, $shifts)
-              @eval $fn($adjoint($A), $b, $shifts)
-            elseif fn in (:usymlq, :usymqr, :tricg, :trimr, :trilqr, :bilqr)
+            if fn in (:tricg, :trimr)
               c_dense = ones(T, 5)
               c_sparse = convert(SparseVector{T,S}, c_dense)
               for c in (c_dense, c_sparse)

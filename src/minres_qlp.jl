@@ -1,34 +1,10 @@
-# An implementation of MINRES-QLP.
-#
-# This method is described in
-#
-# S.-C. T. Choi, Iterative methods for singular linear equations and least-squares problems.
-# PHD thesis, ICME, Stanford University, 2006.
-#
-# S.-C. T. Choi, C. C. Paige and M. A. Saunders, MINRES-QLP: A Krylov subspace method for indefinite or singular symmetric systems.
-# SIAM Journal on Scientific Computing, Vol. 33(4), pp. 1810--1836, 2011.
-#
-# S.-C. T. Choi and M. A. Saunders, MINRES-QLP for symmetric and Hermitian linear equations and least-squares problems.
-# ACM Transactions on Mathematical Software, 2014.
-#
-# Alexis Montoison, <alexis.montoison@polymtl.ca>
-# Montreal, September 2019.
-
 export minres_qlp
 
 """
-    (x, stats) = minrres_qlp(A, b; M, atol, rtol, λ, itmax, verbose)
-
-MINRES-QLP is the only method based on the Lanczos process that returns the minimum-norm
-solution on singular inconsistent systems (A + λI)x = b, where λ is a shift parameter.
-It is significantly more complex but can be more reliable than MINRES when A is ill-conditioned.
-
-A preconditioner M may be provided in the form of a linear operator and is
-assumed to be symmetric and positive definite.
-M also indicates the weighted norm in which residuals are measured.
+    (x, stats) = minrres_qlp(A, b; M, atol, rtol, itmax, verbose)
 """
 function minres_qlp(A, b :: AbstractVector{T};
-                    M=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T), λ ::T=zero(T),
+                    M=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
                     itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
   n, m = size(A)
@@ -101,9 +77,6 @@ function minres_qlp(A, b :: AbstractVector{T};
     # βₖ₊₁vₖ₊₁ = M(A - λI)vₖ - αₖvₖ - βₖvₖ₋₁
 
     p = A * vₖ               # p ← Avₖ
-    if λ ≠ 0
-      @kaxpy!(n, -λ, vₖ, p)  # p ← p - λvₖ
-    end
 
     if iter ≥ 2
       @kaxpy!(n, -βₖ, M⁻¹vₖ₋₁, p) # p ← p - βₖ * M⁻¹vₖ₋₁

@@ -1,27 +1,3 @@
-# An implementation of LSQR for the solution of the
-# over-determined linear least-squares problem
-#
-#  minimize ‖Ax - b‖₂
-#
-# equivalently, of the normal equations
-#
-#  AᵀAx = Aᵀb.
-#
-# LSQR is formally equivalent to applying the conjugate gradient method
-# to the normal equations but should be more stable. It is also formally
-# equivalent to CGLS though LSQR should be expected to be more stable on
-# ill-conditioned or poorly scaled problems.
-#
-# This implementation follows the original implementation by
-# Michael Saunders described in
-#
-# C. C. Paige and M. A. Saunders, LSQR: An Algorithm for Sparse Linear
-# Equations and Sparse Least Squares, ACM Transactions on Mathematical
-# Software, 8(1), pp. 43--71, 1982.
-#
-# Dominique Orban, <dominique.orban@gerad.ca>
-# Montreal, QC, May 2015.
-
 export lsqr
 
 

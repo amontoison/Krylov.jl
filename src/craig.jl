@@ -1,40 +1,8 @@
-# An implementation of the Golub-Kahan version of Craig's method
-# for the solution of the consistent (under/over-determined or square)
-# linear system
-#
-#  Ax = b.
-#
-# The method seeks to solve the minimum-norm problem
-#
-#  min ‖x‖  s.t.  Ax = b,
-#
-# and is equivalent to applying the conjugate gradient method
-# to the linear system
-#
-#  AAᵀy = b.
-#
-# This method, sometimes known under the name CRAIG, is the
-# Golub-Kahan implementation of CGNE, and is described in
-#
-# C. C. Paige and M. A. Saunders, LSQR: An Algorithm for Sparse
-# Linear Equations and Sparse Least Squares, ACM Transactions on
-# Mathematical Software, Vol 8, No. 1, pp. 43-71, 1982.
-#
-# and
-#
-# M. A. Saunders, Solutions of Sparse Rectangular Systems Using
-# LSQR and CRAIG, BIT, No. 35, pp. 588-604, 1995.
-#
-# Dominique Orban, <dominique.orban@gerad.ca>
-# Montréal, QC, April 2015.
-#
-# This implementation is strongly inspired from Mike Saunders's.
-
 export craig
 
 
 """
-    (x, y, stats) = craig(A, b; M, N, sqd, λ, atol, btol, rtol, conlim, itmax, verbose, transfer_to_lsqr)
+    (x, y, stats) = craig(A, b; M, N, sqd, λ, atol, rtol, itmax, verbose)
 
 Find the least-norm solution of the consistent linear system
 
@@ -69,9 +37,9 @@ In this case, M⁻¹ can still be specified and indicates the weighted norm in w
 In this implementation, both the x and y-parts of the solution are returned.
 """
 function craig(A, b :: AbstractVector{T};
-               M=opEye(), N=opEye(), sqd :: Bool=false, λ :: T=zero(T), atol :: T=√eps(T),
-               btol :: T=√eps(T), rtol :: T=√eps(T), conlim :: T=1/√eps(T), itmax :: Int=0,
-               verbose :: Bool=false, transfer_to_lsqr :: Bool=false) where T <: AbstractFloat
+               M=opEye(), N=opEye(), sqd :: Bool=false, λ :: T=zero(T),
+               atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0,
+               verbose :: Bool=false) where T <: AbstractFloat
 
   m, n = size(A)
   size(b, 1) == m || error("Inconsistent problem size")
@@ -133,26 +101,16 @@ function craig(A, b :: AbstractVector{T};
   rNorms = [rNorm;]
   ɛ_c = atol + rtol * rNorm   # Stopping tolerance for consistent systems.
   ɛ_i = atol                  # Stopping tolerance for inconsistent systems.
-  ctol = conlim > 0 ? 1/conlim : zero(T)  # Stopping tolerance for ill-conditioned operators.
   verbose && @printf("%5s  %8s  %8s  %8s  %8s  %8s  %7s\n", "Aprod", "‖r‖", "‖x‖", "‖A‖", "κ(A)", "α", "β")
   verbose && @printf("%5d  %8.2e  %8.2e  %8.2e  %8.2e\n", 1, rNorm, xNorm, Anorm, Acond)
 
-  bkwerr = one(T)  # initial value of the backward error ‖r‖ / √(‖b‖² + ‖A‖² ‖x‖²)
-
   status = "unknown"
 
-  solved_lim = bkwerr ≤ btol
-  solved_mach = one(T) + bkwerr ≤ one(T)
-  solved_resid_tol = rNorm ≤ ɛ_c
-  solved_resid_lim = rNorm ≤ btol + atol * Anorm * xNorm / β₁
-  solved = solved_mach | solved_lim | solved_resid_tol | solved_resid_lim
-
-  ill_cond = ill_cond_mach = ill_cond_lim = false
-
+  solved = rNorm ≤ ɛ_c
   inconsistent = false
   tired = iter ≥ itmax
 
-  while ! (solved || inconsistent || ill_cond || tired)
+  while ! (solved || inconsistent || tired)
     # Generate the next Golub-Kahan vectors
     # 1. αₖ₊₁Nvₖ₊₁ = Aᵀuₖ₊₁ - βₖ₊₁Nvₖ
     Aᵀu = Aᵀ * u
@@ -234,37 +192,17 @@ function craig(A, b :: AbstractVector{T};
     push!(rNorms, rNorm)
     iter = iter + 1
 
-    bkwerr = rNorm / sqrt(β₁² + Anorm² * xNorm²)
-
     ρ_prev = ρ   # Only differs from α if λ > 0.
 
     verbose && @printf("%5d  %8.2e  %8.2e  %8.2e  %8.2e  %8.1e  %7.1e\n", 1 + 2 * iter, rNorm, xNorm, Anorm, Acond, α, β)
 
-    solved_lim = bkwerr ≤ btol
-    solved_mach = one(T) + bkwerr ≤ one(T)
-    solved_resid_tol = rNorm ≤ ɛ_c
-    solved_resid_lim = rNorm ≤ btol + atol * Anorm * xNorm / β₁
-    solved = solved_mach | solved_lim | solved_resid_tol | solved_resid_lim
-
-    ill_cond_mach = one(T) + one(T) / Acond ≤ one(T)
-    ill_cond_lim = 1 / Acond ≤ ctol
-    ill_cond = ill_cond_mach | ill_cond_lim
-
+    solved = rNorm ≤ ɛ_c
     inconsistent = false
     tired = iter ≥ itmax
   end
 
-  # transfer to LSQR point if requested
-  if λ > 0 && transfer_to_lsqr
-    ξ *= -θ / δ
-    @kaxpy!(n, ξ, w2, x)
-    # TODO: update y
-  end
-
   tired         && (status = "maximum number of iterations exceeded")
   solved        && (status = "solution good enough for the tolerances given")
-  ill_cond_mach && (status = "condition number seems too large for this machine")
-  ill_cond_lim  && (status = "condition number exceeds tolerance")
   inconsistent  && (status = "system may be inconsistent")
 
   stats = SimpleStats(solved, inconsistent, rNorms, T[], status)

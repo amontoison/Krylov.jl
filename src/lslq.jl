@@ -1,11 +1,8 @@
-# Dominique Orban, <dominique.orban@gerad.ca>
-# Montreal, QC, November 2016-January 2017.
-
 export lslq
 
 
 """
-    (x_lq, x_cg, err_lbnds, err_ubnds_lq, err_ubnds_cg, stats) = lslq(A, b; M, N, sqd, λ, atol, btol, etol, window, utol, itmax, σ, conlim, verbose)
+    (x, stats) = lslq(A, b; M, N, sqd, λ, atol, btol, etol, window, utol, itmax, σ, conlim, verbose)
 
 Solve the regularized linear least-squares problem
 
@@ -94,7 +91,7 @@ The iterations stop as soon as one of the following conditions holds true:
 """
 function lslq(A, b :: AbstractVector{T};
               M=opEye(), N=opEye(), sqd :: Bool=false, λ :: T=zero(T),
-              atol :: T=√eps(T), btol :: T=√eps(T), etol :: T=√eps(T),
+              atol :: T=√eps(T), btol :: T=√eps(T), etol :: T=√eps(T), rtol :: T=√eps(T),
               window :: Int=5, utol :: T=√eps(T), itmax :: Int=0,
               σ :: T=zero(T), conlim :: T=1/√eps(T), verbose :: Bool=false) where T <: AbstractFloat
 
@@ -196,14 +193,10 @@ function lslq(A, b :: AbstractVector{T};
   itmax == 0 && (itmax = m + n)
 
   status = "unknown"
-  solved = solved_mach = solved_lim = (rNorm ≤ atol)
+  solved = rNorm ≤ atol + rtol * β₁
   tired  = iter ≥ itmax
-  ill_cond = ill_cond_mach = ill_cond_lim = false
-  zero_resid = zero_resid_mach = zero_resid_lim = false
-  fwd_err_lbnd = false
-  fwd_err_ubnd = false
 
-  while ! (solved || tired || ill_cond)
+  while ! (solved || tired)
 
     # Generate next Golub-Kahan vectors.
     # 1. βₖ₊₁Muₖ₊₁ = Avₖ - αₖMuₖ
@@ -300,7 +293,7 @@ function lslq(A, b :: AbstractVector{T};
     test2 = ArNorm / (Anorm * rNorm)
     test3 = 1 / Acond
     t1    = test1 / (one(T) + Anorm * xlqNorm / β₁)
-    rtol  = btol + atol * Anorm * xlqNorm / β₁
+    # rtol  = btol + atol * Anorm * xlqNorm / β₁
 
     verbose && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e  %7.1e  %7.1e\n",
                        1 + 2 * iter, rNorm, ArNorm, β, α, c, s, Anorm, Acond, xlqNorm)
@@ -332,21 +325,9 @@ function lslq(A, b :: AbstractVector{T};
       push!(err_ubnds_lq, abs(ζ̃ ))
     end
 
-    # Stopping conditions that do not depend on user input.
-    # This is to guard against tolerances that are unreasonably small.
-    ill_cond_mach = (one(T) + test3 ≤ one(T))
-    solved_mach = (one(T) + test2 ≤ one(T))
-    zero_resid_mach = (one(T) + t1 ≤ one(T))
-
     # Stopping conditions based on user-provided tolerances.
     tired  = iter ≥ itmax
-    ill_cond_lim = (test3 ≤ ctol)
-    solved_lim = (test2 ≤ atol)
-    zero_resid_lim = (test1 ≤ rtol)
-
-    ill_cond = ill_cond_mach | ill_cond_lim
-    solved = solved_mach | solved_lim | zero_resid_mach | zero_resid_lim | fwd_err_lbnd | fwd_err_ubnd
-
+    solved = rNorm ≤ atol + rtol * β₁
     iter = iter + 1
   end
 
@@ -354,14 +335,9 @@ function lslq(A, b :: AbstractVector{T};
   @kaxpby!(n, one(T), x_lq, ζ̄ , w̄)
   x_cg = w̄
 
-  tired         && (status = "maximum number of iterations exceeded")
-  ill_cond_mach && (status = "condition number seems too large for this machine")
-  ill_cond_lim  && (status = "condition number exceeds tolerance")
-  solved        && (status = "found approximate minimum least-squares solution")
-  zero_resid    && (status = "found approximate zero-residual solution")
-  fwd_err_lbnd  && (status = "forward error lower bound small enough")
-  fwd_err_ubnd  && (status = "forward error upper bound small enough")
+  tired  && (status = "maximum number of iterations exceeded")
+  solved && (status = "found approximate minimum least-squares solution")
 
-  stats = SimpleStats(solved, !zero_resid, rNorms, ArNorms, status)
-  return (x_lq, x_cg, err_lbnds, err_ubnds_lq, err_ubnds_cg, stats)
+  stats = SimpleStats(solved, false, rNorms, ArNorms, status)
+  return (x_lq, stats)
 end
