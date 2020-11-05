@@ -25,7 +25,7 @@ function cr(A, b :: AbstractVector{T};
   γ = zero(T)
   Ar = A * r
 
-  rNorm = norm(r)
+  rNorm = sqrt(dot(r, b))
   rNorm == 0 && return (x, SimpleStats(true, false, [rNorm], T[], "x = 0 is a zero-residual solution"))
 
   iter = 0
@@ -47,12 +47,13 @@ function cr(A, b :: AbstractVector{T};
     @. r = r - α * M⁻¹Ap
     γ_new = dot(r, Ar)
     β = γ_new / γ
-    γ = γ_new
     @. p = r + β * p
     Ar = A * r
     @. Ap = Ar + β * Ap
 
-    rNorm = norm(r)
+    rNorm = sqrt(rNorm^2 - α * γ)
+    γ = γ_new
+
     push!(rNorms, rNorm)
     iter = iter + 1
 
