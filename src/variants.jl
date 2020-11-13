@@ -37,8 +37,8 @@ for fn in (:lnlq, :craig, :craigmr, :lslq, :lsqr, :lsmr)
   end
 end
 
-# Variants for TriCG and TriMR
-for fn in (:tricg, :trimr)
+# Variants for USYMLQ, USYMQR, TriCG and TriMR
+for fn in (:usymlq, :usymqr, :tricg, :trimr)
   @eval begin
     $fn(A :: AbstractMatrix{T}, b :: SparseVector{T}, c :: SparseVector{T}; kwargs...) where T <: AbstractFloat =
       $fn(PreallocatedLinearOperator(A), convert(Vector{T}, b), convert(Vector{T}, c); wrap_preconditioners(kwargs, Vector{T})...)

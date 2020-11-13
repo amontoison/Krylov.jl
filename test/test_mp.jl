@@ -11,6 +11,8 @@ function test_mp()
       λ = zero(T)
       if fn in (:tricg, :trimr)
         x, y = @eval $fn($A, $b, $c)[1:2]
+      elseif fn in (:usymlq, :usymqr)
+        x = @eval $fn($A, $b, $c)[1]
       else
         x = @eval $fn($A, $b)[1]
       end

@@ -143,6 +143,9 @@ include("craigmr.jl")
 include("tricg.jl")
 include("trimr.jl")
 
+include("usymlq.jl")
+include("usymqr.jl")
+
 include("variants.jl")
 
 end

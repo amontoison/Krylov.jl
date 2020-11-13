@@ -21,6 +21,9 @@ include("test_craigmr.jl")
 include("test_tricg.jl")
 include("test_trimr.jl")
 
+include("test_usymlq.jl")
+include("test_usymqr.jl")
+
 # include("test_alloc.jl")
 include("test_mp.jl")
 include("test_variants.jl")

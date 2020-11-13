@@ -1,51 +1,58 @@
-export symmlq
+export usymlq
 
 """
-    (x, stats) = symmlq(A, b; atol, rtol, transfer_to_cg, itmax, verbose)
+    (x, stats) = usymlq(A, b, c; atol, rtol, transfer_to_usymcg, itmax, verbose)
+
+Solve the linear system Ax = b using the USYMLQ method.
+
+USYMLQ is based on a tridiagonalization process for unsymmetric matrices.
+The error norm ‖x - x*‖ monotonously decreases in USYMLQ.
+It's considered as a generalization of SYMMLQ.
+
+It can also be applied to under-determined and over-determined problems.
+In all cases, problems must be consistent.
+
+An option gives the possibility of transferring to the USYMCG point,
+when it exists. The transfer is based on the residual norm.
 """
-function symmlq(A, b :: AbstractVector{T};
-                M=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T), transfer_to_cg :: Bool=false,
+function usymlq(A, b :: AbstractVector{T}, c :: AbstractVector{T};
+                atol :: T=√eps(T), rtol :: T=√eps(T), transfer_to_usymcg :: Bool=false,
                 itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
-  n, m = size(A)
-  m == n || error("System must be square")
+  m, n = size(A)
   length(b) == m || error("Inconsistent problem size")
-  verbose && @printf("SYMMLQ: system of size %d\n", n)
-
-  # Tests M == Iₙ
-  MisI = isa(M, opEye)
+  length(c) == n || error("Inconsistent problem size")
+  verbose && @printf("USYMLQ: system of %d equations in %d variables\n", m, n)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
 
+  # Compute the adjoint of A
+  Aᵀ = A'
+
   # Determine the storage type of b
   S = typeof(b)
 
-  # Initial solution x₀.
+  # Initial solution x₀ and residual norm ‖r₀‖.
   x = kzeros(S, n)
-
-  # β₁v₁ = Mb
-  M⁻¹vₖ = copy(b)
-  vₖ = M * M⁻¹vₖ
-  βₖ = sqrt(@kdot(n, vₖ, M⁻¹vₖ))
-  if βₖ ≠ 0
-    @kscal!(n, 1 / βₖ, M⁻¹vₖ)
-    MisI || @kscal!(n, 1 / βₖ, vₖ)
-  end
-
-  rNorm = βₖ
-  rNorm == 0 && return x, SimpleStats(true, false, [rNorm], T[], "x = 0 is a zero-residual solution")
+  bNorm = @knrm2(m, b)  # ‖r₀‖
+  bNorm == 0 && return (x, SimpleStats(true, false, [bNorm], T[], "x = 0 is a zero-residual solution"))
 
   iter = 0
   itmax == 0 && (itmax = 2*n)
 
-  rNorms = [rNorm;]
-  ε = atol + rtol * rNorm
+  rNorms = [bNorm;]
+  ε = atol + rtol * bNorm
   verbose && @printf("%5s  %7s\n", "k", "‖rₖ‖")
-  verbose && @printf("%5d  %7.1e\n", iter, rNorm)
+  verbose && @printf("%5d  %7.1e\n", iter, bNorm)
 
   # Set up workspace.
-  M⁻¹vₖ₋₁ = kzeros(S, n)
+  βₖ = @knrm2(m, b)          # β₁ = ‖v₁‖
+  γₖ = @knrm2(n, c)          # γ₁ = ‖u₁‖
+  vₖ₋₁ = kzeros(S, m)        # v₀ = 0
+  uₖ₋₁ = kzeros(S, n)        # u₀ = 0
+  vₖ = b / βₖ                # v₁ = b / β₁
+  uₖ = c / γₖ                # u₁ = c / γ₁
   cₖ₋₁ = cₖ = -one(T)        # Givens cosines used for the LQ factorization of Tₖ
   sₖ₋₁ = sₖ = zero(T)        # Givens sines used for the LQ factorization of Tₖ
   d̅ = kzeros(S, n)           # Last column of D̅ₖ = Uₖ(Qₖ)ᵀ
@@ -53,11 +60,8 @@ function symmlq(A, b :: AbstractVector{T};
   ζₖ₋₂ = ηₖ = zero(T)        # ζₖ₋₂ and ηₖ are used to update ζₖ₋₁ and ζbarₖ
   δbarₖ₋₁ = δbarₖ = zero(T)  # Coefficients of Lₖ₋₁ and Lₖ modified over the course of two iterations
 
-  # Use M⁻¹vₖ₋₁ to store vₖ when a preconditioner is provided
-  MisI ? (vₐᵤₓ = vₖ) : (vₐᵤₓ = M⁻¹vₖ₋₁)
-
   # Stopping criterion.
-  solved_lq = rNorm ≤ ε
+  solved_lq = bNorm ≤ ε
   solved_cg = false
   tired     = iter ≥ itmax
   status    = "unknown"
@@ -66,45 +70,39 @@ function symmlq(A, b :: AbstractVector{T};
     # Update iteration index.
     iter = iter + 1
 
-    # Continue the preconditioned Lanczos process.
-    # M(A - λI)Vₖ = Vₖ₊₁Tₖ₊₁.ₖ
-    # βₖ₊₁vₖ₊₁ = M(A - λI)vₖ - αₖvₖ - βₖvₖ₋₁
+    # Continue the SSY tridiagonalization process.
+    # AUₖ  = VₖTₖ    + βₖ₊₁vₖ₊₁(eₖ)ᵀ = Vₖ₊₁Tₖ₊₁.ₖ
+    # AᵀVₖ = Uₖ(Tₖ)ᵀ + γₖ₊₁uₖ₊₁(eₖ)ᵀ = Uₖ₊₁(Tₖ.ₖ₊₁)ᵀ
 
-    p = A * vₖ               # p ← Avₖ
+    q = A  * uₖ  # Forms vₖ₊₁ : q ← Auₖ
+    p = Aᵀ * vₖ  # Forms uₖ₊₁ : p ← Aᵀvₖ
 
-    if iter ≥ 2
-      @kaxpy!(n, -βₖ, M⁻¹vₖ₋₁, p) # p ← p - βₖ * M⁻¹vₖ₋₁
-    end
+    @kaxpy!(m, -γₖ, vₖ₋₁, q)  # q ← q - γₖ * vₖ₋₁
+    @kaxpy!(n, -βₖ, uₖ₋₁, p)  # p ← p - βₖ * uₖ₋₁
 
-    αₖ = @kdot(n, vₖ, p)       # αₖ = pᵀvₖ
+    αₖ = @kdot(m, q, vₖ)      # αₖ = qᵀvₖ
 
-    @kaxpy!(n, -αₖ, M⁻¹vₖ, p)  # p ← p - αₖM⁻¹vₖ
+    @kaxpy!(m, -αₖ, vₖ, q)    # q ← q - αₖ * vₖ
+    @kaxpy!(n, -αₖ, uₖ, p)    # p ← p - αₖ * uₖ
 
-    MisI || (vₐᵤₓ .= vₖ)  # Tempory storage for vₖ
-    vₖ₊₁ = M * p          # βₖ₊₁vₖ₊₁ = MAvₖ - βₖvₖ₋₁ - αₖvₖ
-
-    βₖ₊₁ = sqrt(@kdot(m, vₖ₊₁, p))
-
-    if βₖ₊₁ ≠ 0
-      @kscal!(m, one(T) / βₖ₊₁, vₖ₊₁)
-      MisI || @kscal!(m, one(T) / βₖ₊₁, p)
-    end
+    βₖ₊₁ = @knrm2(m, q)       # βₖ₊₁ = ‖q‖
+    γₖ₊₁ = @knrm2(n, p)       # γₖ₊₁ = ‖p‖
 
     # Update the LQ factorization of Tₖ = L̅ₖQₖ.
-    # [ α₁ β₂ 0  •  •  •  0 ]   [ δ₁   0    •   •   •    •    0   ]
-    # [ β₂ α₂ β₃ •        • ]   [ λ₁   δ₂   •                 •   ]
+    # [ α₁ γ₂ 0  •  •  •  0 ]   [ δ₁   0    •   •   •    •    0   ]
+    # [ β₂ α₂ γ₃ •        • ]   [ λ₁   δ₂   •                 •   ]
     # [ 0  •  •  •  •     • ]   [ ϵ₁   λ₂   δ₃  •             •   ]
     # [ •  •  •  •  •  •  • ] = [ 0    •    •   •   •         •   ] Qₖ
     # [ •     •  •  •  •  0 ]   [ •    •    •   •   •    •    •   ]
-    # [ •        •  •  •  βₖ]   [ •         •   •   •    •    0   ]
+    # [ •        •  •  •  γₖ]   [ •         •   •   •    •    0   ]
     # [ 0  •  •  •  0  βₖ αₖ]   [ •    •    •   0  ϵₖ₋₂ λₖ₋₁ δbarₖ]
 
     if iter == 1
       δbarₖ = αₖ
     elseif iter == 2
-      # [δbar₁ β₂] [c₂  s₂] = [δ₁   0  ]
+      # [δbar₁ γ₂] [c₂  s₂] = [δ₁   0  ]
       # [ β₂   α₂] [s₂ -c₂]   [λ₁ δbar₂]
-      (cₖ, sₖ, δₖ₋₁) = sym_givens(δbarₖ₋₁, βₖ)
+      (cₖ, sₖ, δₖ₋₁) = sym_givens(δbarₖ₋₁, γₖ)
       λₖ₋₁  = cₖ * βₖ + sₖ * αₖ
       δbarₖ = sₖ * βₖ - cₖ * αₖ
     else
@@ -112,10 +110,10 @@ function symmlq(A, b :: AbstractVector{T};
       #             [sₖ₋₁  -cₖ₋₁   0]
       #             [ 0      0     1]
       #
-      # [ λₖ₋₂   δbarₖ₋₁  βₖ] [1   0   0 ] = [λₖ₋₂  δₖ₋₁    0  ]
+      # [ λₖ₋₂   δbarₖ₋₁  γₖ] [1   0   0 ] = [λₖ₋₂  δₖ₋₁    0  ]
       # [sₖ₋₁βₖ  -cₖ₋₁βₖ  αₖ] [0   cₖ  sₖ]   [ϵₖ₋₂  λₖ₋₁  δbarₖ]
       #                       [0   sₖ -cₖ]
-      (cₖ, sₖ, δₖ₋₁) = sym_givens(δbarₖ₋₁, βₖ)
+      (cₖ, sₖ, δₖ₋₁) = sym_givens(δbarₖ₋₁, γₖ)
       ϵₖ₋₂  =  sₖ₋₁ * βₖ
       λₖ₋₁  = -cₖ₋₁ * cₖ * βₖ + sₖ * αₖ
       δbarₖ = -cₖ₋₁ * sₖ * βₖ - cₖ * αₖ
@@ -143,34 +141,40 @@ function symmlq(A, b :: AbstractVector{T};
       ηₖ   = -ϵₖ₋₂ * ζₖ₋₂ - λₖ₋₁ * ζₖ₋₁
     end
 
-    # Relations for the directions dₖ₋₁ and d̅ₖ, the last two columns of D̅ₖ = Vₖ(Qₖ)ᵀ.
-    # [d̅ₖ₋₁ vₖ] [cₖ  sₖ] = [dₖ₋₁ d̅ₖ] ⟷ dₖ₋₁ = cₖ * d̅ₖ₋₁ + sₖ * vₖ
-    #           [sₖ -cₖ]             ⟷ d̅ₖ   = sₖ * d̅ₖ₋₁ - cₖ * vₖ
+    # Relations for the directions dₖ₋₁ and d̅ₖ, the last two columns of D̅ₖ = Uₖ(Qₖ)ᵀ.
+    # [d̅ₖ₋₁ uₖ] [cₖ  sₖ] = [dₖ₋₁ d̅ₖ] ⟷ dₖ₋₁ = cₖ * d̅ₖ₋₁ + sₖ * uₖ
+    #           [sₖ -cₖ]             ⟷ d̅ₖ   = sₖ * d̅ₖ₋₁ - cₖ * uₖ
     if iter ≥ 2
       # Compute solution xₖ.
       # (xᴸ)ₖ₋₁ ← (xᴸ)ₖ₋₂ + ζₖ₋₁ * dₖ₋₁
       @kaxpy!(n, ζₖ₋₁ * cₖ,  d̅, x)
-      @kaxpy!(n, ζₖ₋₁ * sₖ, vₐᵤₓ, x)
+      @kaxpy!(n, ζₖ₋₁ * sₖ, uₖ, x)
     end
 
     # Compute d̅ₖ.
     if iter == 1
-      # d̅₁ = v₁
-      @. d̅ = vₐᵤₓ
+      # d̅₁ = u₁
+      @. d̅ = uₖ
     else
-      # d̅ₖ = sₖ * d̅ₖ₋₁ - cₖ * vₖ
-      @kaxpby!(n, -cₖ, vₐᵤₓ, sₖ, d̅)
+      # d̅ₖ = sₖ * d̅ₖ₋₁ - cₖ * uₖ
+      @kaxpby!(n, -cₖ, uₖ, sₖ, d̅)
     end
 
-    # Update M⁻¹vₖ₋₁, M⁻¹vₖ and vₖ
-    @. M⁻¹vₖ₋₁ = M⁻¹vₖ
-    @. M⁻¹vₖ   = p
-    MisI || (vₖ = vₖ₊₁)
+    # Compute uₖ₊₁ and uₖ₊₁.
+    @. vₖ₋₁ = vₖ  # vₖ₋₁ ← vₖ
+    @. uₖ₋₁ = uₖ  # uₖ₋₁ ← uₖ
+
+    if βₖ₊₁ ≠ zero(T)
+      @. vₖ = q / βₖ₊₁  # βₖ₊₁vₖ₊₁ = q
+    end
+    if γₖ₊₁ ≠ zero(T)
+      @. uₖ = p / γₖ₊₁  # γₖ₊₁uₖ₊₁ = p
+    end
 
     # Compute USYMLQ residual norm
     # ‖rₖ‖ = √((μₖ)² + (ωₖ)²)
     if iter == 1
-      rNorm_lq = rNorm
+      rNorm_lq = bNorm
     else
       μₖ = βₖ * (sₖ₋₁ * ζₖ₋₂ - cₖ₋₁ * cₖ * ζₖ₋₁) + αₖ * sₖ * ζₖ₋₁
       ωₖ = βₖ₊₁ * sₖ * ζₖ₋₁
@@ -180,22 +184,22 @@ function symmlq(A, b :: AbstractVector{T};
 
     # Compute USYMCG residual norm
     # ‖rₖ‖ = |ρₖ|
-    if transfer_to_cg && (δbarₖ ≠ 0)
+    if transfer_to_usymcg && (δbarₖ ≠ 0)
       ζbarₖ = ηₖ / δbarₖ
       ρₖ = βₖ₊₁ * (sₖ * ζₖ₋₁ - cₖ * ζbarₖ)
       rNorm_cg = abs(ρₖ)
     end
 
-    # Update sₖ₋₁, cₖ₋₁, βₖ, βₖ and δbarₖ₋₁.
+    # Update sₖ₋₁, cₖ₋₁, γₖ, βₖ and δbarₖ₋₁.
     sₖ₋₁    = sₖ
     cₖ₋₁    = cₖ
-    βₖ      = βₖ₊₁
+    γₖ      = γₖ₊₁
     βₖ      = βₖ₊₁
     δbarₖ₋₁ = δbarₖ
 
     # Update stopping criterion.
     solved_lq = rNorm_lq ≤ ε
-    solved_cg = transfer_to_cg && (δbarₖ ≠ 0) && (rNorm_cg ≤ ε)
+    solved_cg = transfer_to_usymcg && (δbarₖ ≠ 0) && (rNorm_cg ≤ ε)
     tired = iter ≥ itmax
     verbose && @printf("%5d  %7.1e\n", iter, rNorm_lq)
   end
