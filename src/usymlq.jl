@@ -15,7 +15,7 @@ In all cases, problems must be consistent.
 An option gives the possibility of transferring to the USYMCG point,
 when it exists. The transfer is based on the residual norm.
 """
-function usymlq(A, b :: AbstractVector{T}, c :: AbstractVector{T};
+function usymlq(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
                 atol :: T=√eps(T), rtol :: T=√eps(T), transfer_to_usymcg :: Bool=false,
                 itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 

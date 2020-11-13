@@ -12,7 +12,7 @@ It's considered as a generalization of MINRES.
 It can also be applied to under-determined and over-determined problems.
 USYMQR finds the minimum-norm solution if problems are inconsistent.
 """
-function usymqr(A, b :: AbstractVector{T}, c :: AbstractVector{T};
+function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
                 atol :: T=√eps(T), rtol :: T=√eps(T),
                 itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
