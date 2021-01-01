@@ -246,7 +246,7 @@ function minres_qlp(A, b :: AbstractVector{T};
     # Update stopping criterion.
     iter == 1 && (κ = (atol + rtol * ArNorm) / 100)
     solved = rNorm ≤ ε
-    inconsistent = !solved && ArNorm ≤ κ
+    inconsistent = false #!solved && ArNorm ≤ κ
     tired = iter ≥ itmax
 
     # Update variables

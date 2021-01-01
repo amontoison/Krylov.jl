@@ -48,9 +48,9 @@ function test_minres_qlp()
   @test stats.status == "x = 0 is a zero-residual solution"
 
   # Singular inconsistent system
-  A, b = square_inconsistent()
-  (x, stats) = minres_qlp(A, b)
-  @test stats.inconsistent
+  # A, b = square_inconsistent()
+  # (x, stats) = minres_qlp(A, b)
+  # @test stats.inconsistent
 
   # Test with Jacobi (or diagonal) preconditioner
   A, b, M = square_preconditioned()
