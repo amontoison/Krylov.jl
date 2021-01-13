@@ -195,7 +195,7 @@ function minres(A, b :: AbstractVector{T};
     # Update stopping criterion.
     iter == 1 && (κ = atol + rtol * ArNorm / 100)
     solved = rNorm ≤ ε
-    inconsistent = !solved && ArNorm ≤ κ
+    inconsistent = false #!solved && ArNorm ≤ κ
     tired = iter ≥ itmax
     verbose && @printf("%5d  %7.1e  %7.1e\n", iter, rNorm, ArNorm)
   end
