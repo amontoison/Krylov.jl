@@ -25,5 +25,5 @@ include("test_usymlq.jl")
 include("test_usymqr.jl")
 
 # include("test_alloc.jl")
-include("test_mp.jl")
+# include("test_mp.jl")
 include("test_variants.jl")

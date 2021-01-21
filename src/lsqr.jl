@@ -39,7 +39,7 @@ in which `x` should be measured.
 function lsqr(A, b :: AbstractVector{T};
               M=opEye(), N=opEye(), sqd :: Bool=false,
               λ :: T=zero(T), axtol :: T=√eps(T), btol :: T=√eps(T),
-              atol :: T=zero(T), rtol :: T=zero(T),
+              atol :: T=√eps(T), rtol :: T=√eps(T),
               etol :: T=√eps(T), window :: Int=5,
               itmax :: Int=0, conlim :: T=1/√eps(T),
               radius :: T=zero(T), verbose :: Bool=false) where T <: AbstractFloat
@@ -118,6 +118,7 @@ function lsqr(A, b :: AbstractVector{T};
   res2   = zero(T)
   rNorms = [r2Norm]
   ArNorm = ArNorm0 = α * β
+  ArNorm₁ = ArNorm
   ArNorms = [ArNorm]
 
   iter = 0
@@ -134,8 +135,9 @@ function lsqr(A, b :: AbstractVector{T};
   zero_resid_mach = one(T) + rNorm / β₁ ≤ one(T)
   zero_resid = zero_resid_mach | zero_resid_lim
   fwd_err = false
+  solved2 = ArNorm ≤ atol + rtol * ArNorm₁
 
-  while ! (solved || tired || ill_cond)
+  while ! (solved2 || tired)
     iter = iter + 1
 
     # Generate next Golub-Kahan vectors.
@@ -257,16 +259,21 @@ function lsqr(A, b :: AbstractVector{T};
 
     ill_cond = ill_cond_mach | ill_cond_lim
     solved = solved_mach | solved_lim | solved_opt | zero_resid_mach | zero_resid_lim | fwd_err | on_boundary
+    solved2 = ArNorm ≤ atol + rtol * ArNorm₁
   end
 
-  tired         && (status = "maximum number of iterations exceeded")
-  ill_cond_mach && (status = "condition number seems too large for this machine")
-  ill_cond_lim  && (status = "condition number exceeds tolerance")
-  solved        && (status = "found approximate minimum least-squares solution")
-  zero_resid    && (status = "found approximate zero-residual solution")
-  fwd_err       && (status = "truncated forward error small enough")
-  on_boundary   && (status = "on trust-region boundary")
+  tired   && (status = "maximum number of iterations exceeded")
+  solved2 && (status = "found approximate minimum least-squares solution")
 
-  stats = SimpleStats(solved, !zero_resid, rNorms, ArNorms, status)
+  # tired         && (status = "maximum number of iterations exceeded")
+  # ill_cond_mach && (status = "condition number seems too large for this machine")
+  # ill_cond_lim  && (status = "condition number exceeds tolerance")
+  # solved        && (status = "found approximate minimum least-squares solution")
+  # solved2       && (status = "found approximate minimum least-squares solution")
+  # zero_resid    && (status = "found approximate zero-residual solution")
+  # fwd_err       && (status = "truncated forward error small enough")
+  # on_boundary   && (status = "on trust-region boundary")
+
+  stats = SimpleStats(solved2, false, rNorms, ArNorms, status)
   return (x, stats)
 end

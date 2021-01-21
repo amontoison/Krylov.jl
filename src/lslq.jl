@@ -182,6 +182,7 @@ function lslq(A, b :: AbstractVector{T};
   rNorm = β₁
   rNorms = [rNorm]
   ArNorm = α * β
+  ArNorm₁ = ArNorm
   ArNorms = [ArNorm]
 
   verbose && @printf("%5s  %7s  %7s  %7s  %7s  %8s  %8s  %7s  %7s  %7s\n",
@@ -193,7 +194,7 @@ function lslq(A, b :: AbstractVector{T};
   itmax == 0 && (itmax = m + n)
 
   status = "unknown"
-  solved = rNorm ≤ atol + rtol * β₁
+  solved = ArNorm ≤ atol + rtol * ArNorm₁
   tired  = iter ≥ itmax
 
   while ! (solved || tired)
@@ -327,7 +328,7 @@ function lslq(A, b :: AbstractVector{T};
 
     # Stopping conditions based on user-provided tolerances.
     tired  = iter ≥ itmax
-    solved = rNorm ≤ atol + rtol * β₁
+    solved = ArNorm ≤ atol + rtol * ArNorm₁
     iter = iter + 1
   end
 
