@@ -60,7 +60,7 @@ In this implementation, both the x and y-parts of the solution are returned.
 function lnlq(A, b :: AbstractVector{T};
               M=opEye(), N=opEye(), sqd :: Bool=false, λ :: T=zero(T),
               atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0,
-              transfer_to_craig :: Bool=true, verbose :: Bool=false) where T <: AbstractFloat
+              transfer_to_craig :: Bool=false, verbose :: Bool=false) where T <: AbstractFloat
 
   m, n = size(A)
   size(b, 1) == m || error("Inconsistent problem size")
