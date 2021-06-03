@@ -1,4 +1,5 @@
 ```@docs
 tricg
 trimr
+usymlqr
 ```

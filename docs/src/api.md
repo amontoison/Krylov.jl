@@ -41,6 +41,7 @@ LsmrSolver
 LnlqSolver
 CraigSolver
 CraigmrSolver
+UsymlqrSolver
 ```
 
 ## Utilities

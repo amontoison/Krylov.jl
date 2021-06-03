@@ -30,7 +30,9 @@
         @test norm(x + A * y - b) ≤ Κ * (atol + norm([b; c]) * rtol)
         @test norm(A' * x - y - c) ≤ Κ * (atol + norm([b; c]) * rtol)
         @test eltype(y) == T
-        # to do : add usymlqr tests
+      elseif fn == :usymlqr
+        @test norm(x + A * y - b) ≤ Κ * (atol + norm([b; c]) * rtol)
+        @test norm(A' * x - c) ≤ Κ * (atol + norm([b; c]) * rtol)
       else
         @test norm(A * x - b) ≤ Κ * (atol + norm(b) * rtol)
       end

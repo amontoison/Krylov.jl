@@ -1,15 +1,15 @@
-function test_usymlqr()
+@testset "usymlqr" begin
   usymlqr_tol = 1.0e-6
 
   # Test saddle-point systems
   A, b, D = saddle_point()
   m, n = size(A)
   c = -b
-  D⁻¹ = inv(D)
+  D⁻¹ = sparse(inv(D))
   N⁻¹ = eye(n)
-  H⁻¹ = BlockDiagonalOperator(D⁻¹, N⁻¹)
+  H⁻¹ = blockdiag(D⁻¹, N⁻¹)
 
-  (x, r, y, z, stats) = usymlqr(A, b, c, M=D⁻¹)
+  (x, y, stats) = usymlqr(A, b, c, M=D⁻¹)
   K = [D A; A' zeros(n, n)]
   B = [b; c]
   r =  B - K * [x; y]
@@ -17,7 +17,7 @@ function test_usymlqr()
   @printf("USYMLQR: Relative residual: %8.1e\n", resid)
   @test(resid ≤ usymlqr_tol)
 
-  (x, r, y, z, stats) = usymlqr(A, b, c)
+  (x, y, stats) = usymlqr(A, b, c)
   K = [eye(m) A; A' zeros(n, n)]
   B = [b; c]
   r =  B - K * [x; y]
