@@ -1,6 +1,6 @@
 module Krylov
 
-using LinearOperators, LinearAlgebra, SparseArrays, Printf
+using LinearAlgebra, SparseArrays, Printf
 
 "Abstract type for statistics returned by a solver"
 abstract type KrylovStats{T} end
@@ -145,7 +145,5 @@ include("trimr.jl")
 
 include("usymlq.jl")
 include("usymqr.jl")
-
-include("variants.jl")
 
 end
