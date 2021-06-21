@@ -1,31 +1,76 @@
-export cg
+# A standard implementation of the Conjugate Gradient method.
+# The only non-standard point about it is that it does not check
+# that the operator is definite.
+# It is possible to check that the system is inconsistent by
+# monitoring ‖p‖, which would cost an extra norm computation per
+# iteration.
+#
+# This method is described in
+#
+# M. R. Hestenes and E. Stiefel. Methods of conjugate gradients for solving linear systems.
+# Journal of Research of the National Bureau of Standards, 49(6), pp. 409--436, 1952.
+#
+# Dominique Orban, <dominique.orban@gerad.ca>
+# Salt Lake City, UT, March 2015.
+
+export cg, cg!
+
 
 """
-    (x, stats) = cg(A, b; M, atol, rtol, itmax, radius, linesearch, verbose)
+    (x, stats) = cg(A, b::AbstractVector{T};
+                    M=I, atol::T=√eps(T), rtol::T=√eps(T),
+                    itmax::Int=0, radius::T=zero(T), linesearch::Bool=false,
+                    verbose::Int=0, history::Bool=false) where T <: AbstractFloat
+
+The conjugate gradient method to solve the symmetric linear system Ax=b.
+
+The method does _not_ abort if A is not definite.
+
+A preconditioner M may be provided in the form of a linear operator and is
+assumed to be symmetric and positive definite.
+M also indicates the weighted norm in which residuals are measured.
+
+If `itmax=0`, the default number of iterations is set to `2 * n`,
+with `n = length(b)`.
+
+#### Reference
+
+* M. R. Hestenes and E. Stiefel, *Methods of conjugate gradients for solving linear systems*, Journal of Research of the National Bureau of Standards, 49(6), pp. 409--436, 1952.
 """
-function cg(A, b :: AbstractVector{T};
-            M=I, atol :: T=√eps(T), rtol :: T=√eps(T),
-            itmax :: Int=0, radius :: T=zero(T), linesearch :: Bool=false,
-            verbose :: Bool=false) where T <: AbstractFloat
+function cg(A, b :: AbstractVector{T}; kwargs...) where T <: AbstractFloat
+  solver = CgSolver(A, b)
+  cg!(solver, A, b; kwargs...)
+end
+
+function cg!(solver :: CgSolver{T,S}, A, b :: AbstractVector{T};
+             M=I, atol :: T=√eps(T), rtol :: T=√eps(T),
+             itmax :: Int=0, radius :: T=zero(T), linesearch :: Bool=false,
+             verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, S <: DenseVector{T}}
 
   linesearch && (radius > 0) && error("`linesearch` set to `true` but trust-region radius > 0")
 
-  n = size(b, 1)
-  (size(A, 1) == n & size(A, 2) == n) || error("Inconsistent problem size")
-  verbose && @printf("CG: system of %d equations in %d variables\n", n, n)
+  n, m = size(A)
+  m == n || error("System must be square")
+  length(b) == n || error("Inconsistent problem size")
+  (verbose > 0) && @printf("CG: system of %d equations in %d variables\n", n, n)
+
+  # Tests M == Iₙ
+  MisI = (M == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
-  (M == I) || (eltype(M) == T) || error("eltype(M) ≠ $T")
+  ktypeof(b) == S || error("ktypeof(b) ≠ $S")
+  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
 
-  # Determine the storage type of b
-  S = typeof(b)
+  # Set up workspace.
+  allocate_if(!MisI, solver, :z, S, n)
+  x, r, p, Ap = solver.x, solver.r, solver.p, solver.Ap
+  z = MisI ? r : solver.z
 
-  # Initial state.
-  x = kzeros(S, n)
-  r = copy(b)
-  z = M * r
-  p = copy(z)
+  x .= zero(T)
+  r .= b
+  MisI || mul!(z, M, r)
+  p .= z
   γ = @kdot(n, r, z)
   γ == 0 && return x, SimpleStats(true, false, [zero(T)], T[], "x = 0 is a zero-residual solution")
 
@@ -35,10 +80,10 @@ function cg(A, b :: AbstractVector{T};
   pAp = zero(T)
   rNorm = sqrt(γ)
   pNorm² = γ
-  rNorms = [rNorm;]
+  rNorms = history ? [rNorm] : T[]
   ε = atol + rtol * rNorm
-  verbose && @printf("%5s  %7s  %8s  %8s  %8s\n", "k", "‖r‖", "pAp", "α", "σ")
-  verbose && @printf("%5d  %7.1e  ", iter, rNorm)
+  (verbose > 0) && @printf("%5s  %7s  %8s  %8s  %8s\n", "k", "‖r‖", "pAp", "α", "σ")
+  display(iter, verbose) && @printf("%5d  %7.1e  ", iter, rNorm)
 
   solved = rNorm ≤ ε
   tired = iter ≥ itmax
@@ -49,7 +94,7 @@ function cg(A, b :: AbstractVector{T};
   status = "unknown"
 
   while !(solved || tired || zero_curvature)
-    Ap = A * p
+    mul!(Ap, A, p)
     pAp = @kdot(n, p, Ap)
     if (pAp ≤ eps(T) * pNorm²) && (radius == 0)
       if abs(pAp) ≤ eps(T) * pNorm²
@@ -68,7 +113,7 @@ function cg(A, b :: AbstractVector{T};
     # Compute step size to boundary if applicable.
     σ = radius > 0 ? maximum(to_boundary(x, p, radius, dNorm2=pNorm²)) : α
 
-    verbose && @printf("%8.1e  %8.1e  %8.1e\n", pAp, α, σ)
+    display(iter, verbose) && @printf("%8.1e  %8.1e  %8.1e\n", pAp, α, σ)
 
     # Move along p from x to the boundary if either
     # the next step leads outside the trust region or
@@ -80,10 +125,10 @@ function cg(A, b :: AbstractVector{T};
 
     @kaxpy!(n,  α,  p, x)
     @kaxpy!(n, -α, Ap, r)
-    z = M * r
+    MisI || mul!(z, M, r)
     γ_next = @kdot(n, r, z)
     rNorm = sqrt(γ_next)
-    push!(rNorms, rNorm)
+    history && push!(rNorms, rNorm)
 
     solved = (rNorm ≤ ε) || on_boundary
 
@@ -96,9 +141,9 @@ function cg(A, b :: AbstractVector{T};
 
     iter = iter + 1
     tired = iter ≥ itmax
-    verbose && @printf("%5d  %7.1e  ", iter, rNorm)
+    display(iter, verbose) && @printf("%5d  %7.1e  ", iter, rNorm)
   end
-  verbose && @printf("\n")
+  (verbose > 0) && @printf("\n")
 
   solved && on_boundary && (status = "on trust-region boundary")
   solved && linesearch && (pAp ≤ 0) && (status = "nonpositive curvature detected")
