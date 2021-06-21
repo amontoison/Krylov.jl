@@ -7,7 +7,6 @@ include("krylov_stats.jl")
 include("krylov_solvers.jl")
 
 include("cg.jl")
-include("cr.jl")
 
 include("symmlq.jl")
 include("minres.jl")
