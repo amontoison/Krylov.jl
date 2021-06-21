@@ -1,4 +1,4 @@
-function test_aux()
+@testset "aux" begin
   # test Givens reflector corner cases
   (c, s, ρ) = Krylov.sym_givens(0.0, 0.0)
   @test (c == 1.0) && (s == 0.0) && (ρ == 0.0)
@@ -15,6 +15,20 @@ function test_aux()
   (c, s, ρ) = Krylov.sym_givens(0.0, -b)
   @test (c == 0.0) && (s == -1.0) && (ρ == b)
 
+  (c, s, ρ) = Krylov.sym_givens(Complex(0.0), Complex(0.0))
+  @test (c == 1.0) && (s == Complex(0.0)) && (ρ == Complex(0.0))
+
+  a = Complex(1.0, 1.0)
+  (c, s, ρ) = Krylov.sym_givens(a, Complex(0.0))
+  @test (c == 1.0) && (s == Complex(0.0)) && (ρ == a)
+  (c, s, ρ) = Krylov.sym_givens(-a, Complex(0.0))
+  @test (c == 1.0) && (s == Complex(0.0)) && (ρ == -a)
+
+  b = Complex(1.0, 1.0)
+  (c, s, ρ) = Krylov.sym_givens(Complex(0.0), b)
+  @test (c == 0.0) && (s == Complex(1.0)) && (ρ == b)
+  (c, s, ρ) = Krylov.sym_givens(Complex(0.0), -b)
+  @test (c == 0.0) && (s == Complex(1.0)) && (ρ == -b)
 
   # test roots of a quadratic
   roots = Krylov.roots_quadratic(0.0, 0.0, 0.0)
@@ -79,8 +93,17 @@ function test_aux()
   @test minimum(Krylov.to_boundary(x, d, 5.0, flip=true)) ≈ -2.209975124224178
 
   # test kzeros and kones
-  Krylov.kzeros(Vector{Float64}, 10) == zeros(10)
-  Krylov.kones(Vector{Float64}, 10) == ones(10)
-end
+  @test Krylov.kzeros(Vector{Float64}, 10) == zeros(10)
+  @test Krylov.kones(Vector{Float64}, 10) == ones(10)
 
-test_aux()
+  # test ktypeof
+  a = sprand(Float32, 10, 0.5)
+  b = view(a, 4:8)
+  @test Krylov.ktypeof(a) == Vector{Float32}
+  @test Krylov.ktypeof(b) == Vector{Float32}
+
+  a = sprand(Float64, 10, 0.5)
+  b = view(a, 4:8)
+  @test Krylov.ktypeof(a) == Vector{Float64}
+  @test Krylov.ktypeof(b) == Vector{Float64}
+end
