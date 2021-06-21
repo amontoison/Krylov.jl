@@ -33,7 +33,7 @@ TriMR stops when `itmax` iterations are reached or when `‖rₖ‖ ≤ atol + �
 Additional details can be displayed if the `verbose` mode is enabled.
 """
 function trimr(A, b :: AbstractVector{T}, c :: AbstractVector{T};
-               M=opEye(), N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
+               M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
                spd :: Bool=false, snd :: Bool=false, flip :: Bool=false, sp :: Bool=false,
                τ :: T=one(T), ν :: T=-one(T), itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
@@ -104,7 +104,7 @@ function trimr(A, b :: AbstractVector{T}, c :: AbstractVector{T};
   gx₂ₖ   = kzeros(S, m)
   gy₂ₖ   = kzeros(S, n)
 
-  # Compute ‖r₀‖² = (γ₁)² + (β₁)²
+  # Compute ‖r₀‖² = (γ₁)² + (β₁)²
   rNorm = sqrt(γₖ^2 + βₖ^2)
   rNorms = [rNorm;]
   ε = atol + rtol * rNorm
@@ -337,7 +337,7 @@ function trimr(A, b :: AbstractVector{T}, c :: AbstractVector{T};
     # Update yₖ = Gyₖ * pₖ
     @. yₖ += π₂ₖ₋₁ * gy₂ₖ₋₁ + π₂ₖ * gy₂ₖ
 
-    # Compute ‖rₖ‖² = (πbar₂ₖ₊₁)² + (πbar₂ₖ₊₂)²
+    # Compute ‖rₖ‖² = (πbar₂ₖ₊₁)² + (πbar₂ₖ₊₂)²
     rNorm = sqrt(πbar₂ₖ₊₁^2 + πbar₂ₖ₊₂^2)
     push!(rNorms, rNorm)
 

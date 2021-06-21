@@ -4,7 +4,7 @@ export cr
     (x, stats) = cr(A, b; M, atol, rtol, itmax, verbose)
 """
 function cr(A, b :: AbstractVector{T};
-            M=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
+            M=I, atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
   n = size(b, 1)
   (size(A, 1) == n & size(A, 2) == n) || error("Inconsistent problem size")

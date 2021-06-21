@@ -53,8 +53,8 @@ function usymlq(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
   uₖ₋₁ = kzeros(S, n)        # u₀ = 0
   vₖ = b / βₖ                # v₁ = b / β₁
   uₖ = c / γₖ                # u₁ = c / γ₁
-  cₖ₋₁ = cₖ = -one(T)        # Givens cosines used for the LQ factorization of Tₖ
-  sₖ₋₁ = sₖ = zero(T)        # Givens sines used for the LQ factorization of Tₖ
+  cₖ₋₁ = cₖ = -one(T)        # Givens cosines used for the LQ factorization of Tₖ
+  sₖ₋₁ = sₖ = zero(T)        # Givens sines used for the LQ factorization of Tₖ
   d̅ = kzeros(S, n)           # Last column of D̅ₖ = Uₖ(Qₖ)ᵀ
   ζₖ₋₁ = ζbarₖ = zero(T)     # ζₖ₋₁ and ζbarₖ are the last components of z̅ₖ = (L̅ₖ)⁻¹β₁e₁
   ζₖ₋₂ = ηₖ = zero(T)        # ζₖ₋₂ and ηₖ are used to update ζₖ₋₁ and ζbarₖ
@@ -161,8 +161,8 @@ function usymlq(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
     end
 
     # Compute uₖ₊₁ and uₖ₊₁.
-    @. vₖ₋₁ = vₖ  # vₖ₋₁ ← vₖ
-    @. uₖ₋₁ = uₖ  # uₖ₋₁ ← uₖ
+    @. vₖ₋₁ = vₖ  # vₖ₋₁ ← vₖ
+    @. uₖ₋₁ = uₖ  # uₖ₋₁ ← uₖ
 
     if βₖ₊₁ ≠ zero(T)
       @. vₖ = q / βₖ₊₁  # βₖ₊₁vₖ₊₁ = q
@@ -182,7 +182,7 @@ function usymlq(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
     end
     push!(rNorms, rNorm_lq)
 
-    # Compute USYMCG residual norm
+    # Compute USYMCG residual norm
     # ‖rₖ‖ = |ρₖ|
     if transfer_to_usymcg && (δbarₖ ≠ 0)
       ζbarₖ = ηₖ / δbarₖ

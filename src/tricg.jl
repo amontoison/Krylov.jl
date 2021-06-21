@@ -32,7 +32,7 @@ TriCG stops when `itmax` iterations are reached or when `‖rₖ‖ ≤ atol + �
 Additional details can be displayed if the `verbose` mode is enabled.
 """
 function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
-               M=opEye(), N=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
+               M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
                spd :: Bool=false, snd :: Bool=false, flip :: Bool=false,
                τ :: T=one(T), ν :: T=-one(T), itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
@@ -96,7 +96,7 @@ function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
   gx₂ₖ   = kzeros(S, m)
   gy₂ₖ   = kzeros(S, n)
 
-  # Compute ‖r₀‖² = (γ₁)² + (β₁)²
+  # Compute ‖r₀‖² = (γ₁)² + (β₁)²
   rNorm = sqrt(γₖ^2 + βₖ^2)
   rNorms = [rNorm;]
   ε = atol + rtol * rNorm
@@ -253,7 +253,7 @@ function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
     @. M⁻¹vₖ = q
     @. N⁻¹uₖ = p
 
-    # Compute ‖rₖ‖² = (γₖ₊₁ζ₂ₖ₋₁)² + (βₖ₊₁ζ₂ₖ)²
+    # Compute ‖rₖ‖² = (γₖ₊₁ζ₂ₖ₋₁)² + (βₖ₊₁ζ₂ₖ)²
     rNorm = sqrt((γₖ₊₁ * (π₂ₖ₋₁ - δₖ*π₂ₖ))^2 + (βₖ₊₁ * π₂ₖ)^2)
     push!(rNorms, rNorm)
 

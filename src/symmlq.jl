@@ -4,7 +4,7 @@ export symmlq
     (x, stats) = symmlq(A, b; atol, rtol, transfer_to_cg, itmax, verbose)
 """
 function symmlq(A, b :: AbstractVector{T};
-                M=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T), transfer_to_cg :: Bool=false,
+                M=I, atol :: T=√eps(T), rtol :: T=√eps(T), transfer_to_cg :: Bool=false,
                 itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
   n, m = size(A)
@@ -46,8 +46,8 @@ function symmlq(A, b :: AbstractVector{T};
 
   # Set up workspace.
   M⁻¹vₖ₋₁ = kzeros(S, n)
-  cₖ₋₁ = cₖ = -one(T)        # Givens cosines used for the LQ factorization of Tₖ
-  sₖ₋₁ = sₖ = zero(T)        # Givens sines used for the LQ factorization of Tₖ
+  cₖ₋₁ = cₖ = -one(T)        # Givens cosines used for the LQ factorization of Tₖ
+  sₖ₋₁ = sₖ = zero(T)        # Givens sines used for the LQ factorization of Tₖ
   d̅ = kzeros(S, n)           # Last column of D̅ₖ = Uₖ(Qₖ)ᵀ
   ζₖ₋₁ = ζbarₖ = zero(T)     # ζₖ₋₁ and ζbarₖ are the last components of z̅ₖ = (L̅ₖ)⁻¹β₁e₁
   ζₖ₋₂ = ηₖ = zero(T)        # ζₖ₋₂ and ηₖ are used to update ζₖ₋₁ and ζbarₖ
@@ -178,7 +178,7 @@ function symmlq(A, b :: AbstractVector{T};
     end
     push!(rNorms, rNorm_lq)
 
-    # Compute USYMCG residual norm
+    # Compute USYMCG residual norm
     # ‖rₖ‖ = |ρₖ|
     if transfer_to_cg && (δbarₖ ≠ 0)
       ζbarₖ = ηₖ / δbarₖ

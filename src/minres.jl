@@ -4,7 +4,7 @@ export minres
     (x, stats) = minres(A, b; M, atol, rtol, itmax, verbose)
 """
 function minres(A, b :: AbstractVector{T};
-                M=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
+                M=I, atol :: T=√eps(T), rtol :: T=√eps(T),
                 itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
   n, m = size(A)
@@ -48,10 +48,10 @@ function minres(A, b :: AbstractVector{T};
 
   # Set up workspace.
   M⁻¹vₖ₋₁ = kzeros(S, n)
-  cₖ₋₂ = cₖ₋₁ = cₖ = zero(T)  # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
-  sₖ₋₂ = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
-  wₖ₋₂ = kzeros(S, n)         # Column k-2 of Wₖ = Vₖ(Rₖ)⁻¹
-  wₖ₋₁ = kzeros(S, n)         # Column k-1 of Wₖ = Vₖ(Rₖ)⁻¹
+  cₖ₋₂ = cₖ₋₁ = cₖ = zero(T)  # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
+  sₖ₋₂ = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
+  wₖ₋₂ = kzeros(S, n)         # Column k-2 of Wₖ = Vₖ(Rₖ)⁻¹
+  wₖ₋₁ = kzeros(S, n)         # Column k-1 of Wₖ = Vₖ(Rₖ)⁻¹
   ζbarₖ = βₖ                  # ζbarₖ is the last component of z̅ₖ = (Qₖ)ᵀβ₁e₁
 
   # Use M⁻¹vₖ₋₁ to store vₖ when a preconditioner is provided
@@ -105,7 +105,7 @@ function minres(A, b :: AbstractVector{T};
     #
     # If k = 1, we don't have any previous reflexion.
     # If k = 2, we apply the last reflexion.
-    # If k ≥ 3, we only apply the two previous reflexions.
+    # If k ≥ 3, we only apply the two previous reflexions.
 
     # Apply previous Givens reflections Qₖ₋₂.ₖ₋₁
     if iter ≥ 3
@@ -151,7 +151,7 @@ function minres(A, b :: AbstractVector{T};
       @kaxpy!(n, one(T), vₐᵤₓ, wₖ)
       @. wₖ = wₖ / λₖ
     end
-    # wₖ = (vₖ - γₖ₋₁wₖ₋₁ - ϵₖ₋₂wₖ₋₂) / λₖ
+    # wₖ = (vₖ - γₖ₋₁wₖ₋₁ - ϵₖ₋₂wₖ₋₂) / λₖ
     if iter ≥ 3
       @kscal!(n, -ϵₖ₋₂, wₖ₋₂)
       wₖ = wₖ₋₂
@@ -164,7 +164,7 @@ function minres(A, b :: AbstractVector{T};
     # xₖ ← xₖ₋₁ + ζₖ * wₖ
     @kaxpy!(n, ζₖ, wₖ, x)
 
-    # Compute ‖rₖ‖ = |ζbarₖ₊₁|.
+    # Compute ‖rₖ‖ = |ζbarₖ₊₁|.
     rNorm = abs(ζbarₖ₊₁)
     push!(rNorms, rNorm)
 

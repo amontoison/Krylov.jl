@@ -4,7 +4,7 @@ export cg
     (x, stats) = cg(A, b; M, atol, rtol, itmax, radius, linesearch, verbose)
 """
 function cg(A, b :: AbstractVector{T};
-            M=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
+            M=I, atol :: T=√eps(T), rtol :: T=√eps(T),
             itmax :: Int=0, radius :: T=zero(T), linesearch :: Bool=false,
             verbose :: Bool=false) where T <: AbstractFloat
 
@@ -16,7 +16,7 @@ function cg(A, b :: AbstractVector{T};
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
-  isa(M, opEye) || (eltype(M) == T) || error("eltype(M) ≠ $T")
+  isa(M, opEye) || (eltype(M) == T) || error("eltype(M) ≠ $T")
 
   # Determine the storage type of b
   S = typeof(b)

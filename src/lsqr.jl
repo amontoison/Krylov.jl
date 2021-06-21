@@ -37,7 +37,7 @@ In this case, `N` can still be specified and indicates the norm
 in which `x` should be measured.
 """
 function lsqr(A, b :: AbstractVector{T};
-              M=opEye(), N=opEye(), sqd :: Bool=false,
+              M=I, N=I, sqd :: Bool=false,
               λ :: T=zero(T), axtol :: T=√eps(T), btol :: T=√eps(T),
               atol :: T=√eps(T), rtol :: T=√eps(T),
               etol :: T=√eps(T), window :: Int=5,
@@ -54,8 +54,8 @@ function lsqr(A, b :: AbstractVector{T};
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
-  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
-  NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
+  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
+  NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
   # Compute the adjoint of A
   Aᵀ = A'

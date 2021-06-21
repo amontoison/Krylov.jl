@@ -52,10 +52,10 @@ function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
   uₖ₋₁ = kzeros(S, n)         # u₀ = 0
   vₖ = b / βₖ                 # v₁ = b / β₁
   uₖ = c / γₖ                 # u₁ = c / γ₁
-  cₖ₋₂ = cₖ₋₁ = cₖ = zero(T)  # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
-  sₖ₋₂ = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
-  wₖ₋₂ = kzeros(S, n)         # Column k-2 of Wₖ = Uₖ(Rₖ)⁻¹
-  wₖ₋₁ = kzeros(S, n)         # Column k-1 of Wₖ = Uₖ(Rₖ)⁻¹
+  cₖ₋₂ = cₖ₋₁ = cₖ = zero(T)  # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
+  sₖ₋₂ = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
+  wₖ₋₂ = kzeros(S, n)         # Column k-2 of Wₖ = Uₖ(Rₖ)⁻¹
+  wₖ₋₁ = kzeros(S, n)         # Column k-1 of Wₖ = Uₖ(Rₖ)⁻¹
   ζbarₖ = βₖ                  # ζbarₖ is the last component of z̅ₖ = (Qₖ)ᵀβ₁e₁
 
   # Stopping criterion.
@@ -99,7 +99,7 @@ function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
     #
     # If k = 1, we don't have any previous reflexion.
     # If k = 2, we apply the last reflexion.
-    # If k ≥ 3, we only apply the two previous reflexions.
+    # If k ≥ 3, we only apply the two previous reflexions.
 
     # Apply previous Givens reflections Qₖ₋₂.ₖ₋₁
     if iter ≥ 3
@@ -146,7 +146,7 @@ function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
       @kaxpy!(n, one(T), uₖ, wₖ)
       @. wₖ = wₖ / δₖ
     end
-    # wₖ = (uₖ - λₖ₋₁wₖ₋₁ - ϵₖ₋₂wₖ₋₂) / δₖ
+    # wₖ = (uₖ - λₖ₋₁wₖ₋₁ - ϵₖ₋₂wₖ₋₂) / δₖ
     if iter ≥ 3
       @kscal!(n, -ϵₖ₋₂, wₖ₋₂)
       wₖ = wₖ₋₂
@@ -159,7 +159,7 @@ function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
     # xₖ ← xₖ₋₁ + ζₖ * wₖ
     @kaxpy!(n, ζₖ, wₖ, x)
 
-    # Compute ‖rₖ‖ = |ζbarₖ₊₁|.
+    # Compute ‖rₖ‖ = |ζbarₖ₊₁|.
     rNorm = abs(ζbarₖ₊₁)
     push!(rNorms, rNorm)
 
@@ -168,8 +168,8 @@ function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
     push!(AᵀrNorms, AᵀrNorm)
 
     # Compute uₖ₊₁ and uₖ₊₁.
-    @. vₖ₋₁ = vₖ # vₖ₋₁ ← vₖ
-    @. uₖ₋₁ = uₖ # uₖ₋₁ ← uₖ
+    @. vₖ₋₁ = vₖ # vₖ₋₁ ← vₖ
+    @. uₖ₋₁ = uₖ # uₖ₋₁ ← uₖ
 
     if βₖ₊₁ ≠ zero(T)
       @. vₖ = q / βₖ₊₁ # βₖ₊₁vₖ₊₁ = q

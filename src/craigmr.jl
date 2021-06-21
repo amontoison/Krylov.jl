@@ -43,7 +43,7 @@ It is formally equivalent to CRMR, though can be slightly more accurate, and int
 In this implementation, both the x and y-parts of the solution are returned.
 """
 function craigmr(A, b :: AbstractVector{T};
-                 M=opEye(), N=opEye(), sqd :: Bool=false, λ :: T=zero(T), atol :: T=√eps(T),
+                 M=I, N=I, sqd :: Bool=false, λ :: T=zero(T), atol :: T=√eps(T),
                  rtol :: T=√eps(T), itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
   m, n = size(A)
@@ -56,8 +56,8 @@ function craigmr(A, b :: AbstractVector{T};
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
-  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
-  NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
+  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
+  NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
   # Compute the adjoint of A
   Aᵀ = A'

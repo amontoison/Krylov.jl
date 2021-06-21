@@ -4,7 +4,7 @@ export minres_qlp
     (x, stats) = minrres_qlp(A, b; M, atol, rtol, itmax, verbose)
 """
 function minres_qlp(A, b :: AbstractVector{T};
-                    M=opEye(), atol :: T=√eps(T), rtol :: T=√eps(T),
+                    M=I, atol :: T=√eps(T), rtol :: T=√eps(T),
                     itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
 
   n, m = size(A)
@@ -56,8 +56,8 @@ function minres_qlp(A, b :: AbstractVector{T};
   μbisₖ₋₂ = μbarₖ₋₁ = zero(T)
   wₖ₋₁  = kzeros(S, n)
   wₖ    = kzeros(S, n)
-  cₖ₋₂  = cₖ₋₁ = cₖ = zero(T)  # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
-  sₖ₋₂  = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
+  cₖ₋₂  = cₖ₋₁ = cₖ = zero(T)  # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
+  sₖ₋₂  = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
 
   # Use M⁻¹vₖ₋₁ to store vₖ when a preconditioner is provided
   MisI ? (vₐᵤₓ = vₖ) : (vₐᵤₓ = M⁻¹vₖ₋₁)
@@ -68,7 +68,7 @@ function minres_qlp(A, b :: AbstractVector{T};
   tired = iter ≥ itmax
   status = "unknown"
 
-  while !(solved || tired || inconsistent)
+  while !(solved || tired || inconsistent)
     # Update iteration index.
     iter = iter + 1
 
@@ -110,7 +110,7 @@ function minres_qlp(A, b :: AbstractVector{T};
     #
     # If k = 1, we don't have any previous reflexion.
     # If k = 2, we apply the last reflexion.
-    # If k ≥ 3, we only apply the two previous reflexions.
+    # If k ≥ 3, we only apply the two previous reflexions.
 
     # Apply previous Givens reflections Qₖ₋₂.ₖ₋₁
     if iter ≥ 3

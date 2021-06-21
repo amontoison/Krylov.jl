@@ -58,7 +58,7 @@ In this case, M can still be specified and indicates the weighted norm in which 
 In this implementation, both the x and y-parts of the solution are returned.
 """
 function lnlq(A, b :: AbstractVector{T};
-              M=opEye(), N=opEye(), sqd :: Bool=false, λ :: T=zero(T),
+              M=I, N=I, sqd :: Bool=false, λ :: T=zero(T),
               atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0,
               transfer_to_craig :: Bool=false, verbose :: Bool=false) where T <: AbstractFloat
 
@@ -72,8 +72,8 @@ function lnlq(A, b :: AbstractVector{T};
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
-  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
-  NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
+  MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
+  NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
   # Compute the adjoint of A
   Aᵀ = A'
@@ -119,7 +119,7 @@ function lnlq(A, b :: AbstractVector{T};
 
   # Set up workspace.
   w̄ = copy(u)         # Direction w̄₁
-  cₖ = sₖ = zero(T)   # Givens sines and cosines used for the LQ factorization of (Lₖ)ᵀ
+  cₖ = sₖ = zero(T)   # Givens sines and cosines used for the LQ factorization of (Lₖ)ᵀ
   ζₖ₋₁ = zero(T)      # ζₖ₋₁ and ζbarₖ are the last components of z̅ₖ
   ηₖ = zero(T)        # Coefficient of M̅ₖ
 
@@ -270,7 +270,7 @@ function lnlq(A, b :: AbstractVector{T};
     # Compute w̄ₖ₊₁
     @kaxpby!(m, -cₖ₊₁, u, sₖ₊₁, w̄)
 
-    # Compute residual norm ‖(rᴸ)ₖ‖ = |αₖ| * √((ϵbarₖζbarₖ)² + (βₖ₊₁sₖζₖ₋₁)²)
+    # Compute residual norm ‖(rᴸ)ₖ‖ = |αₖ| * √((ϵbarₖζbarₖ)² + (βₖ₊₁sₖζₖ₋₁)²)
     if iter == 1
       rNorm_lq = bNorm
     else
@@ -278,7 +278,7 @@ function lnlq(A, b :: AbstractVector{T};
     end
     push!(rNorms, rNorm_lq)
 
-    # Compute residual norm ‖(rᶜ)ₖ‖ = |βₖ₊₁ * τₖ|
+    # Compute residual norm ‖(rᶜ)ₖ‖ = |βₖ₊₁ * τₖ|
     if transfer_to_craig
       rNorm_cg = abs(βhatₖ₊₁ * τₖ)
     end
@@ -341,6 +341,6 @@ function lnlq(A, b :: AbstractVector{T};
   tired     && (status = "maximum number of iterations exceeded")
   solved_lq && (status = "solutions (xᴸ, yᴸ) good enough for the tolerances given")
   solved_cg && (status = "solutions (xᶜ, yᶜ) good enough for the tolerances given")
-  stats = SimpleStats(solved_lq || solved_cg, false, rNorms, T[], status)
+  stats = SimpleStats(solved_lq || solved_cg, false, rNorms, T[], status)
   return (x, y, stats)
 end

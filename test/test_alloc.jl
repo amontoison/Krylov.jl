@@ -11,8 +11,8 @@ mem = 10
 shifts  = [1.0; 2.0; 3.0; 4.0; 5.0]
 nshifts = 5
 
-# UniformScaling preconditioners I should work as OpEye()
-M1 = opEye()
+# UniformScaling preconditioners I should work as I
+M1 = I
 M2 = I
 cg(L, b, M=M1) # warmup
 cg(L, b, M=M2) # warmup
