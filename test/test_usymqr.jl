@@ -65,20 +65,6 @@
   @test x == zeros(size(A,1))
   @test stats.status == "x = 0 is a zero-residual solution"
 
-  # Square and consistent systems.
-  A, b = square_consistent()
-  c = ones(10)
-  (x, stats) = usymqr(A, b)
-  r = b - A * x
-  resid = norm(r) / norm(b)
-  @test(resid ≤ usymqr_tol)
-
-  # Square and inconsistent systems.
-  A, b = square_inconsistent()
-  c = ones(10)
-  (x, stats) = usymqr(A, b)
-  @test stats.inconsistent
-
   # Poisson equation in polar coordinates.
   A, b = polar_poisson()
   (x, stats) = usymqr(A, b)

@@ -1,7 +1,28 @@
-export usymqr
+# An implementation of USYMQR for the solution of linear system Ax = b.
+#
+# This method is described in
+#
+# M. A. Saunders, H. D. Simon, and E. L. Yip
+# Two Conjugate-Gradient-Type Methods for Unsymmetric Linear Equations.
+# SIAM Journal on Numerical Analysis, 25(4), pp. 927--940, 1988.
+#
+# A. Buttari, D. Orban, D. Ruiz and D. Titley-Peloquin
+# A tridiagonalization method for symmetric saddle-point and quasi-definite systems.
+# SIAM Journal on Scientific Computing, 41(5), pp. 409--432, 2019.
+#
+# A. Montoison and D. Orban
+# BiLQ: An Iterative Method for Nonsymmetric Linear Systems with a Quasi-Minimum Error Property.
+# SIAM Journal on Matrix Analysis and Applications, 41(3), pp. 1145--1166, 2020.
+#
+# Alexis Montoison, <alexis.montoison@polymtl.ca>
+# Montreal, November 2018.
+
+export usymqr, usymqr!
 
 """
-    (x, stats) = usymqr(A, b, c; atol, rtol, itmax, verbose)
+    (x, stats) = usymqr(A, b::AbstractVector{T}, c::AbstractVector{T};
+                        atol::T=√eps(T), rtol::T=√eps(T),
+                        itmax::Int=0, verbose::Int=0, history::Bool=false) where T <: AbstractFloat
 
 Solve the linear system Ax = b using the USYMQR method.
 
@@ -11,51 +32,63 @@ It's considered as a generalization of MINRES.
 
 It can also be applied to under-determined and over-determined problems.
 USYMQR finds the minimum-norm solution if problems are inconsistent.
+
+#### References
+
+* M. A. Saunders, H. D. Simon, and E. L. Yip, *Two Conjugate-Gradient-Type Methods for Unsymmetric Linear Equations*, SIAM Journal on Numerical Analysis, 25(4), pp. 927--940, 1988.
+* A. Buttari, D. Orban, D. Ruiz and D. Titley-Peloquin, *A tridiagonalization method for symmetric saddle-point and quasi-definite systems*, SIAM Journal on Scientific Computing, 41(5), pp. 409--432, 2019.
+* A. Montoison and D. Orban, *BiLQ: An Iterative Method for Nonsymmetric Linear Systems with a Quasi-Minimum Error Property*, SIAM Journal on Matrix Analysis and Applications, 41(3), pp. 1145--1166, 2020.
 """
-function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
-                atol :: T=√eps(T), rtol :: T=√eps(T),
-                itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
+function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b, kwargs...) where T <: AbstractFloat
+  solver = UsymqrSolver(A, b)
+  usymqr!(solver, A, b, c=c; kwargs...)
+end
+
+function usymqr!(solver :: UsymqrSolver{T,S}, A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
+                 atol :: T=√eps(T), rtol :: T=√eps(T),
+                 itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, S <: DenseVector{T}}
 
   m, n = size(A)
   length(b) == m || error("Inconsistent problem size")
   length(c) == n || error("Inconsistent problem size")
-  verbose && @printf("USYMQR: system of %d equations in %d variables\n", m, n)
+  (verbose > 0) && @printf("USYMQR: system of %d equations in %d variables\n", m, n)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
+  ktypeof(b) == S || error("ktypeof(b) ≠ $S")
+  ktypeof(c) == S || error("ktypeof(c) ≠ $S")
 
   # Compute the adjoint of A
   Aᵀ = A'
 
-  # Determine the storage type of b
-  S = typeof(b)
+  # Set up workspace.
+  vₖ₋₁, vₖ, q, x, wₖ₋₂, wₖ₋₁, uₖ₋₁, uₖ, p = solver.vₖ₋₁, solver.vₖ, solver.q, solver.x, solver.wₖ₋₂, solver.wₖ₋₁, solver.uₖ₋₁, solver.uₖ, solver.p
 
   # Initial solution x₀ and residual norm ‖r₀‖.
-  x = kzeros(S, n)
+  x .= zero(T)
   rNorm = @knrm2(m, b)
   rNorm == 0 && return x, SimpleStats(true, false, [rNorm], T[], "x = 0 is a zero-residual solution")
 
   iter = 0
-  itmax == 0 && (itmax = 2*n)
+  itmax == 0 && (itmax = m+n)
 
-  rNorms = [rNorm;]
+  rNorms = history ? [rNorm] : T[]
   ε = atol + rtol * rNorm
   AᵀrNorms = T[]
   κ = zero(T)
-  verbose && @printf("%5s  %7s  %7s\n", "k", "‖rₖ‖", "‖Aᵀrₖ₋₁‖")
-  verbose && @printf("%5d  %7.1e  %7s\n", iter, rNorm, "✗ ✗ ✗ ✗")
+  (verbose > 0) && @printf("%5s  %7s  %7s\n", "k", "‖rₖ‖", "‖Aᵀrₖ₋₁‖")
+  display(iter, verbose) && @printf("%5d  %7.1e  %7s\n", iter, rNorm, "✗ ✗ ✗ ✗")
 
-  # Set up workspace.
   βₖ = @knrm2(m, b)           # β₁ = ‖v₁‖
   γₖ = @knrm2(n, c)           # γ₁ = ‖u₁‖
-  vₖ₋₁ = kzeros(S, m)         # v₀ = 0
-  uₖ₋₁ = kzeros(S, n)         # u₀ = 0
-  vₖ = b / βₖ                 # v₁ = b / β₁
-  uₖ = c / γₖ                 # u₁ = c / γ₁
+  vₖ₋₁ .= zero(T)             # v₀ = 0
+  uₖ₋₁ .= zero(T)             # u₀ = 0
+  vₖ .= b ./ βₖ               # v₁ = b / β₁
+  uₖ .= c ./ γₖ               # u₁ = c / γ₁
   cₖ₋₂ = cₖ₋₁ = cₖ = zero(T)  # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
   sₖ₋₂ = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
-  wₖ₋₂ = kzeros(S, n)         # Column k-2 of Wₖ = Uₖ(Rₖ)⁻¹
-  wₖ₋₁ = kzeros(S, n)         # Column k-1 of Wₖ = Uₖ(Rₖ)⁻¹
+  wₖ₋₂ .= zero(T)             # Column k-2 of Wₖ = Uₖ(Rₖ)⁻¹
+  wₖ₋₁ .= zero(T)             # Column k-1 of Wₖ = Uₖ(Rₖ)⁻¹
   ζbarₖ = βₖ                  # ζbarₖ is the last component of z̅ₖ = (Qₖ)ᵀβ₁e₁
 
   # Stopping criterion.
@@ -72,8 +105,8 @@ function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
     # AUₖ  = VₖTₖ    + βₖ₊₁vₖ₊₁(eₖ)ᵀ = Vₖ₊₁Tₖ₊₁.ₖ
     # AᵀVₖ = Uₖ(Tₖ)ᵀ + γₖ₊₁uₖ₊₁(eₖ)ᵀ = Uₖ₊₁(Tₖ.ₖ₊₁)ᵀ
 
-    q = A  * uₖ  # Forms vₖ₊₁ : q ← Auₖ
-    p = Aᵀ * vₖ  # Forms uₖ₊₁ : p ← Aᵀvₖ
+    mul!(q, A , uₖ)  # Forms vₖ₊₁ : q ← Auₖ
+    mul!(p, Aᵀ, vₖ)  # Forms uₖ₊₁ : p ← Aᵀvₖ
 
     @kaxpy!(m, -γₖ, vₖ₋₁, q) # q ← q - γₖ * vₖ₋₁
     @kaxpy!(n, -βₖ, uₖ₋₁, p) # p ← p - βₖ * uₖ₋₁
@@ -161,11 +194,11 @@ function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
 
     # Compute ‖rₖ‖ = |ζbarₖ₊₁|.
     rNorm = abs(ζbarₖ₊₁)
-    push!(rNorms, rNorm)
+    history && push!(rNorms, rNorm)
 
     # Compute ‖Aᵀrₖ₋₁‖ = |ζbarₖ| * √((δbarₖ)² + (λbarₖ)²).
     AᵀrNorm = abs(ζbarₖ) * √(δbarₖ^2 + (cₖ₋₁ * γₖ₊₁)^2)
-    push!(AᵀrNorms, AᵀrNorm)
+    history && push!(AᵀrNorms, AᵀrNorm)
 
     # Compute uₖ₊₁ and uₖ₊₁.
     @. vₖ₋₁ = vₖ # vₖ₋₁ ← vₖ
@@ -197,11 +230,11 @@ function usymqr(A, b :: AbstractVector{T}; c :: AbstractVector{T}=b,
     # Update stopping criterion.
     iter == 1 && (κ = atol + rtol * AᵀrNorm)
     solved = rNorm ≤ ε
-    inconsistent = !solved && AᵀrNorm ≤ κ
+    # inconsistent = !solved && AᵀrNorm ≤ κ
     tired = iter ≥ itmax
-    verbose && @printf("%5d  %7.1e  %7.1e\n", iter, rNorm, AᵀrNorm)
+    display(iter, verbose) && @printf("%5d  %7.1e  %7.1e\n", iter, rNorm, AᵀrNorm)
   end
-  verbose && @printf("\n")
+  (verbose > 0) && @printf("\n")
   status = tired ? "maximum number of iterations exceeded" : "solution good enough given atol and rtol"
   stats = SimpleStats(solved, inconsistent, rNorms, AᵀrNorms, status)
   return (x, stats)
