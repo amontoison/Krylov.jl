@@ -12,7 +12,7 @@ function cr(A, b :: AbstractVector{T};
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
-  isa(M, opEye) || (eltype(M) == T) || error("eltype(M) ≠ $T")
+  (M == I) || (eltype(M) == T) || error("eltype(M) ≠ $T")
 
   # Determine the storage type of b
   S = typeof(b)

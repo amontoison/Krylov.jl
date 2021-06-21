@@ -46,9 +46,9 @@ function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
   snd && flip && error("The matrix cannot be SND and SQD")
   spd && snd  && error("The matrix cannot be SPD and SND")
 
-  # Check M == Iₘ and N == Iₙ
-  MisI = isa(M, opEye)
-  NisI = isa(N, opEye)
+  # Check (M == I)ₘ and (N == I)ₙ
+  MisI = (M == I)
+  NisI = (N == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")

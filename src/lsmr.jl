@@ -54,9 +54,9 @@ function lsmr(A, b :: AbstractVector{T};
   # Determine the storage type of b
   S = typeof(b)
 
-  # Tests M == Iₙ and N == Iₘ
-  MisI = isa(M, opEye)
-  NisI = isa(N, opEye)
+  # Tests (M == I)ₙ and (N == I)ₘ
+  MisI = (M == I)
+  NisI = (N == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")

@@ -45,9 +45,9 @@ function craig(A, b :: AbstractVector{T};
   size(b, 1) == m || error("Inconsistent problem size")
   verbose && @printf("CRAIG: system of %d equations in %d variables\n", m, n)
 
-  # Tests M == Iₘ and N == Iₙ
-  MisI = isa(M, opEye)
-  NisI = isa(N, opEye)
+  # Tests (M == I)ₘ and (N == I)ₙ
+  MisI = (M == I)
+  NisI = (N == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")

@@ -99,9 +99,9 @@ function lslq(A, b :: AbstractVector{T};
   size(b, 1) == m || error("Inconsistent problem size")
   verbose && @printf("LSLQ: system of %d equations in %d variables\n", m, n)
 
-  # Tests M == Iₙ and N == Iₘ
-  MisI = isa(M, opEye)
-  NisI = isa(N, opEye)
+  # Tests (M == I)ₙ and (N == I)ₘ
+  MisI = (M == I)
+  NisI = (N == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
