@@ -1,33 +1,74 @@
-export minres_qlp
+# An implementation of MINRES-QLP.
+#
+# This method is described in
+#
+# S.-C. T. Choi, Iterative methods for singular linear equations and least-squares problems.
+# Ph.D. thesis, ICME, Stanford University, 2006.
+#
+# S.-C. T. Choi, C. C. Paige and M. A. Saunders, MINRES-QLP: A Krylov subspace method for indefinite or singular symmetric systems.
+# SIAM Journal on Scientific Computing, Vol. 33(4), pp. 1810--1836, 2011.
+#
+# S.-C. T. Choi and M. A. Saunders, Algorithm 937: MINRES-QLP for symmetric and Hermitian linear equations and least-squares problems.
+# ACM Transactions on Mathematical Software, 40(2), pp. 1--12, 2014.
+#
+# Alexis Montoison, <alexis.montoison@polymtl.ca>
+# Montreal, September 2019.
+
+export minres_qlp, minres_qlp!
 
 """
-    (x, stats) = minrres_qlp(A, b; M, atol, rtol, itmax, verbose)
+    (x, stats) = minres_qlp(A, b::AbstractVector{T};
+                            M=I, atol::T=√eps(T), rtol::T=√eps(T), λ::T=zero(T),
+                            itmax::Int=0, verbose::Int=0, history::Bool=false) where T <: AbstractFloat
+
+MINRES-QLP is the only method based on the Lanczos process that returns the minimum-norm
+solution on singular inconsistent systems (A + λI)x = b, where λ is a shift parameter.
+It is significantly more complex but can be more reliable than MINRES when A is ill-conditioned.
+
+A preconditioner M may be provided in the form of a linear operator and is
+assumed to be symmetric and positive definite.
+M also indicates the weighted norm in which residuals are measured.
+
+#### References
+
+* S.-C. T. Choi, *Iterative methods for singular linear equations and least-squares problems*, Ph.D. thesis, ICME, Stanford University, 2006.
+* S.-C. T. Choi, C. C. Paige and M. A. Saunders, *MINRES-QLP: A Krylov subspace method for indefinite or singular symmetric systems*, SIAM Journal on Scientific Computing, Vol. 33(4), pp. 1810--1836, 2011.
+* S.-C. T. Choi and M. A. Saunders, *Algorithm 937: MINRES-QLP for symmetric and Hermitian linear equations and least-squares problems*, ACM Transactions on Mathematical Software, 40(2), pp. 1--12, 2014.
 """
-function minres_qlp(A, b :: AbstractVector{T};
-                    M=I, atol :: T=√eps(T), rtol :: T=√eps(T),
-                    itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
+function minres_qlp(A, b :: AbstractVector{T}; kwargs...) where T <: AbstractFloat
+  solver = MinresQlpSolver(A, b)
+  minres_qlp!(solver, A, b; kwargs...)
+end
+
+function minres_qlp!(solver :: MinresQlpSolver{T,S}, A, b :: AbstractVector{T};
+                     M=I, atol :: T=√eps(T), rtol :: T=√eps(T), λ ::T=zero(T),
+                     itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, S <: DenseVector{T}}
 
   n, m = size(A)
   m == n || error("System must be square")
   length(b) == m || error("Inconsistent problem size")
-  verbose && @printf("MINRES-QLP: system of size %d\n", n)
+  (verbose > 0) && @printf("MINRES-QLP: system of size %d\n", n)
 
-  # Tests (M == I)ₙ
+  # Tests M == Iₙ
   MisI = (M == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
+  ktypeof(b) == S || error("ktypeof(b) ≠ $S")
   MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
 
-  # Determine the storage type of b
-  S = typeof(b)
+  # Set up workspace.
+  allocate_if(!MisI, solver, :vₖ, S, n)
+  wₖ₋₁, wₖ, M⁻¹vₖ₋₁, M⁻¹vₖ, x, p = solver.wₖ₋₁, solver.wₖ, solver.M⁻¹vₖ₋₁, solver.M⁻¹vₖ, solver.x, solver.p
+  vₖ = MisI ? M⁻¹vₖ : solver.vₖ
+  vₖ₊₁ = MisI ? p : M⁻¹vₖ₋₁
 
   # Initial solution x₀
-  x = kzeros(S, n)
+  x .= zero(T)
 
   # β₁v₁ = Mb
-  M⁻¹vₖ = copy(b)
-  vₖ = M * M⁻¹vₖ
+  M⁻¹vₖ .= b
+  MisI || mul!(vₖ, M, M⁻¹vₖ)
   βₖ = sqrt(@kdot(n, vₖ, M⁻¹vₖ))
   if βₖ ≠ 0
     @kscal!(n, 1 / βₖ, M⁻¹vₖ)
@@ -40,27 +81,24 @@ function minres_qlp(A, b :: AbstractVector{T};
   iter = 0
   itmax == 0 && (itmax = 2*n)
 
-  rNorms = [rNorm;]
+  rNorms = history ? [rNorm] : T[]
   ε = atol + rtol * rNorm
   ArNorms = T[]
   κ = zero(T)
-  verbose && @printf("%5s  %7s  %7s\n", "k", "‖rₖ‖", "‖Arₖ₋₁‖")
-  verbose && @printf("%5d  %7.1e  %7s\n", iter, rNorm, "✗ ✗ ✗ ✗")
+  (verbose > 0) && @printf("%5s  %7s  %7s\n", "k", "‖rₖ‖", "‖Arₖ₋₁‖")
+  display(iter, verbose) && @printf("%5d  %7.1e  %7s\n", iter, rNorm, "✗ ✗ ✗ ✗")
 
   # Set up workspace.
-  M⁻¹vₖ₋₁ = kzeros(S, n)
+  M⁻¹vₖ₋₁ .= zero(T)
   ζbarₖ   = βₖ
   ξₖ₋₁    = zero(T)
   τₖ₋₂    = τₖ₋₁ = τₖ = zero(T)
   ψbarₖ₋₂ = zero(T)
   μbisₖ₋₂ = μbarₖ₋₁ = zero(T)
-  wₖ₋₁  = kzeros(S, n)
-  wₖ    = kzeros(S, n)
+  wₖ₋₁ .= zero(T)
+  wₖ   .= zero(T)
   cₖ₋₂  = cₖ₋₁ = cₖ = zero(T)  # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
   sₖ₋₂  = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
-
-  # Use M⁻¹vₖ₋₁ to store vₖ when a preconditioner is provided
-  MisI ? (vₐᵤₓ = vₖ) : (vₐᵤₓ = M⁻¹vₖ₋₁)
 
   # Stopping criterion.
   solved = rNorm ≤ ε
@@ -73,10 +111,13 @@ function minres_qlp(A, b :: AbstractVector{T};
     iter = iter + 1
 
     # Continue the preconditioned Lanczos process.
-    # M(A - λI)Vₖ = Vₖ₊₁Tₖ₊₁.ₖ
-    # βₖ₊₁vₖ₊₁ = M(A - λI)vₖ - αₖvₖ - βₖvₖ₋₁
+    # M(A + λI)Vₖ = Vₖ₊₁Tₖ₊₁.ₖ
+    # βₖ₊₁vₖ₊₁ = M(A + λI)vₖ - αₖvₖ - βₖvₖ₋₁
 
-    p = A * vₖ               # p ← Avₖ
+    mul!(p, A, vₖ)          # p ← Avₖ
+    if λ ≠ 0
+      @kaxpy!(n, λ, vₖ, p)  # p ← p + λvₖ
+    end
 
     if iter ≥ 2
       @kaxpy!(n, -βₖ, M⁻¹vₖ₋₁, p) # p ← p - βₖ * M⁻¹vₖ₋₁
@@ -86,8 +127,7 @@ function minres_qlp(A, b :: AbstractVector{T};
 
     @kaxpy!(n, -αₖ, M⁻¹vₖ, p)  # p ← p - αₖM⁻¹vₖ
 
-    MisI || (vₐᵤₓ .= vₖ)  # Tempory storage for vₖ
-    vₖ₊₁ = M * p          # βₖ₊₁vₖ₊₁ = MAvₖ - γₖvₖ₋₁ - αₖvₖ
+    MisI || mul!(vₖ₊₁, M, p)   # βₖ₊₁vₖ₊₁ = MAvₖ - γₖvₖ₋₁ - αₖvₖ
 
     βₖ₊₁ = sqrt(@kdot(m, vₖ₊₁, p))
 
@@ -204,13 +244,13 @@ function minres_qlp(A, b :: AbstractVector{T};
     # Compute directions wₖ₋₂, ẘₖ₋₁ and w̄ₖ, last columns of Wₖ = Vₖ(Pₖ)ᵀ
     if iter == 1
       # w̅₁ = v₁
-      @. wₖ = vₐᵤₓ
+      @. wₖ = vₖ
     elseif iter == 2
       # [w̅ₖ₋₁ vₖ] [cpₖ  spₖ] = [ẘₖ₋₁ w̅ₖ] ⟷ ẘₖ₋₁ = cpₖ * w̅ₖ₋₁ + spₖ * vₖ
       #           [spₖ -cpₖ]             ⟷ w̅ₖ   = spₖ * w̅ₖ₋₁ - cpₖ * vₖ
       @kswap(wₖ₋₁, wₖ)
-      @. wₖ = spₖ * wₖ₋₁ - cpₖ * vₐᵤₓ
-      @kaxpby!(n, spₖ, vₐᵤₓ, cpₖ, wₖ₋₁)
+      @. wₖ = spₖ * wₖ₋₁ - cpₖ * vₖ
+      @kaxpby!(n, spₖ, vₖ, cpₖ, wₖ₋₁)
     else
       # [ẘₖ₋₂ w̄ₖ₋₁ vₖ] [cpₖ  0   spₖ] [1   0    0 ] = [wₖ₋₂ ẘₖ₋₁ w̄ₖ] ⟷ wₖ₋₂ = cpₖ * ẘₖ₋₂ + spₖ * vₖ
       #                [ 0   1    0 ] [0  cdₖ  sdₖ]                  ⟷ ẘₖ₋₁ = cdₖ * w̄ₖ₋₁ + sdₖ * (spₖ * ẘₖ₋₂ - cpₖ * vₖ)
@@ -219,34 +259,34 @@ function minres_qlp(A, b :: AbstractVector{T};
       w̄ₖ₋₁ = wₖ
       # Update the solution x
       @kaxpy!(n, cpₖ * τₖ₋₂, ẘₖ₋₂, x)
-      @kaxpy!(n, spₖ * τₖ₋₂, vₐᵤₓ, x)
+      @kaxpy!(n, spₖ * τₖ₋₂, vₖ, x)
       # Compute wₐᵤₓ = spₖ * ẘₖ₋₂ - cpₖ * vₖ
-      @kaxpby!(n, -cpₖ, vₐᵤₓ, spₖ, ẘₖ₋₂)
+      @kaxpby!(n, -cpₖ, vₖ, spₖ, ẘₖ₋₂)
       wₐᵤₓ = ẘₖ₋₂
       # Compute ẘₖ₋₁ and w̄ₖ
       @kref!(n, w̄ₖ₋₁, wₐᵤₓ, cdₖ, sdₖ)
       @kswap(wₖ₋₁, wₖ)
     end
 
-    # Update M⁻¹vₖ₋₁, M⁻¹vₖ and vₖ
-    @. M⁻¹vₖ₋₁ = M⁻¹vₖ
-    @. M⁻¹vₖ   = p
-    MisI || (vₖ = vₖ₊₁)
+    # Update vₖ, M⁻¹vₖ₋₁, M⁻¹vₖ
+    MisI || (vₖ .= vₖ₊₁)
+    M⁻¹vₖ₋₁ .= M⁻¹vₖ
+    M⁻¹vₖ .= p
 
     # Update ‖rₖ‖ estimate
     # ‖ rₖ ‖ = |ζbarₖ₊₁|
     rNorm = abs(ζbarₖ₊₁)
-    push!(rNorms, rNorm)
+    history && push!(rNorms, rNorm)
 
     # Update ‖Arₖ₋₁‖ estimate
     # ‖ Arₖ₋₁ ‖ = |ζbarₖ| * √((λbarₖ)² + (γbarₖ)²)
     ArNorm = abs(ζbarₖ) * √(λbarₖ^2 + (cₖ₋₁ * βₖ₊₁)^2)
-    push!(ArNorms, ArNorm)
+    history && push!(ArNorms, ArNorm)
 
     # Update stopping criterion.
     iter == 1 && (κ = (atol + rtol * ArNorm) / 100)
     solved = rNorm ≤ ε
-    inconsistent = false #!solved && ArNorm ≤ κ
+    # inconsistent = !solved && ArNorm ≤ κ
     tired = iter ≥ itmax
 
     # Update variables
@@ -262,9 +302,9 @@ function minres_qlp(A, b :: AbstractVector{T};
     μbarₖ₋₁ = μbarₖ
     ζbarₖ = ζbarₖ₊₁
     βₖ = βₖ₊₁
-    verbose && @printf("%5d  %7.1e  %7.1e\n", iter, rNorm, ArNorm)
+    display(iter, verbose) && @printf("%5d  %7.1e  %7.1e\n", iter, rNorm, ArNorm)
   end
-  verbose && @printf("\n")
+  (verbose > 0) && @printf("\n")
 
   # Finalize the update of x
   if iter ≥ 2
