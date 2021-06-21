@@ -1,7 +1,21 @@
-export tricg
+# An implementation of TriCG for the solution of symmetric and quasi-definite systems.
+#
+# This method is described in
+#
+# A. Montoison and D. Orban
+# TriCG and TriMR: Two Iterative Methods for Symmetric Quasi-Definite Systems
+# Cahier du GERAD G-2020-41, GERAD, Montréal, 2020. doi:10.13140/RG.2.2.12344.16645
+#
+# Alexis Montoison, <alexis.montoison@polymtl.ca>
+# Montréal, April 2020.
+
+export tricg, tricg!
 
 """
-    (x, y, stats) = tricg(A, b, c; M, N, atol, rtol, spd, snd, flip, τ, ν, itmax, verbose)
+    (x, y, stats) = tricg(A, b::AbstractVector{T}, c::AbstractVector{T};
+                          M=I, N=I, atol::T=√eps(T), rtol::T=√eps(T),
+                          spd::Bool=false, snd::Bool=false, flip::Bool=false,
+                          τ::T=one(T), ν::T=-one(T), itmax::Int=0, verbose::Int=0, history::Bool=false) where T <: AbstractFloat
 
 TriCG solves the symmetric linear system
 
@@ -20,7 +34,7 @@ If `snd = true`, τ = ν = -1 and the associated symmetric and negative definite
 TriCG is based on the preconditioned orthogonal tridiagonalization process
 and its relation with the preconditioned block-Lanczos process.
 
-    [ M   O ]
+    [ M   0 ]
     [ 0   N ]
 
 indicates the weighted norm in which residuals are measured.
@@ -29,52 +43,71 @@ It's the Euclidean norm when `M` and `N` are identity operators.
 TriCG stops when `itmax` iterations are reached or when `‖rₖ‖ ≤ atol + ‖r₀‖ * rtol`.
 `atol` is an absolute tolerance and `rtol` is a relative tolerance.
 
-Additional details can be displayed if the `verbose` mode is enabled.
+Additional details can be displayed if verbose mode is enabled (verbose > 0).
+Information will be displayed every `verbose` iterations.
+
+#### Reference
+
+* A. Montoison and D. Orban, *TriCG and TriMR: Two Iterative Methods for Symmetric Quasi-Definite Systems*, Cahier du GERAD G-2020-41, GERAD, Montréal, 2020.
 """
-function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
-               M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
-               spd :: Bool=false, snd :: Bool=false, flip :: Bool=false,
-               τ :: T=one(T), ν :: T=-one(T), itmax :: Int=0, verbose :: Bool=false) where T <: AbstractFloat
+function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T}; kwargs...) where T <: AbstractFloat
+  solver = TricgSolver(A, b)
+  tricg!(solver, A, b, c; kwargs...)
+end
+
+function tricg!(solver :: TricgSolver{T,S}, A, b :: AbstractVector{T}, c :: AbstractVector{T};
+                M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
+                spd :: Bool=false, snd :: Bool=false, flip :: Bool=false,
+                τ :: T=one(T), ν :: T=-one(T), itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, S <: DenseVector{T}}
 
   m, n = size(A)
   length(b) == m || error("Inconsistent problem size")
   length(c) == n || error("Inconsistent problem size")
-  verbose && @printf("TriCG: system of %d equations in %d variables\n", m+n, m+n)
+  (verbose > 0) && @printf("TriCG: system of %d equations in %d variables\n", m+n, m+n)
 
   # Check flip, spd and snd parameters
   spd && flip && error("The matrix cannot be SPD and SQD")
   snd && flip && error("The matrix cannot be SND and SQD")
   spd && snd  && error("The matrix cannot be SPD and SND")
 
-  # Check (M == I)ₘ and (N == I)ₙ
+  # Check M == Iₘ and N == Iₙ
   MisI = (M == I)
   NisI = (N == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
+  ktypeof(b) == S || error("ktypeof(b) ≠ $S")
+  ktypeof(c) == S || error("ktypeof(c) ≠ $S")
   MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
   NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
   # Compute the adjoint of A
   Aᵀ = A'
 
-  # Determine the storage type of b
-  S = typeof(b)
+  # Set up workspace.
+  allocate_if(!MisI, solver, :vₖ, S, m)
+  allocate_if(!NisI, solver, :uₖ, S, n)
+  yₖ, N⁻¹uₖ₋₁, N⁻¹uₖ, p, xₖ, M⁻¹vₖ₋₁ = solver.yₖ, solver.N⁻¹uₖ₋₁, solver.p, solver.N⁻¹uₖ, solver.xₖ, solver.M⁻¹vₖ₋₁
+  M⁻¹vₖ, q, gy₂ₖ₋₁, gy₂ₖ, gx₂ₖ₋₁, gx₂ₖ = solver.M⁻¹vₖ, solver.q, solver.gy₂ₖ₋₁, solver.gy₂ₖ, solver.gx₂ₖ₋₁, solver.gx₂ₖ
+  vₖ = MisI ? M⁻¹vₖ : solver.vₖ
+  uₖ = NisI ? N⁻¹uₖ : solver.uₖ
+  vₖ₊₁ = MisI ? q : vₖ
+  uₖ₊₁ = NisI ? p : uₖ
 
   # Initial solutions x₀ and y₀.
-  xₖ = kzeros(S, m)
-  yₖ = kzeros(S, n)
+  xₖ .= zero(T)
+  yₖ .= zero(T)
 
   iter = 0
   itmax == 0 && (itmax = m+n)
-  
+
   # Initialize preconditioned orthogonal tridiagonalization process.
-  M⁻¹vₖ₋₁ = kzeros(S, m)  # v₀ = 0
-  N⁻¹uₖ₋₁ = kzeros(S, n)  # u₀ = 0
+  M⁻¹vₖ₋₁ .= zero(T)  # v₀ = 0
+  N⁻¹uₖ₋₁ .= zero(T)  # u₀ = 0
 
   # β₁Ev₁ = b ↔ β₁v₁ = Mb
-  M⁻¹vₖ = copy(b)
-  vₖ = M * M⁻¹vₖ
+  M⁻¹vₖ .= b
+  MisI || mul!(vₖ, M, M⁻¹vₖ)
   βₖ = sqrt(@kdot(m, vₖ, M⁻¹vₖ))  # β₁ = ‖v₁‖_E
   if βₖ ≠ 0
     @kscal!(m, 1 / βₖ, M⁻¹vₖ)
@@ -82,8 +115,8 @@ function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
   end
 
   # γ₁Fu₁ = c ↔ γ₁u₁ = Nb
-  N⁻¹uₖ = copy(c)
-  uₖ = N * N⁻¹uₖ
+  N⁻¹uₖ .= c
+  NisI || mul!(uₖ, N, N⁻¹uₖ)
   γₖ = sqrt(@kdot(n, uₖ, N⁻¹uₖ))  # γ₁ = ‖u₁‖_F
   if γₖ ≠ 0
     @kscal!(n, 1 / γₖ, N⁻¹uₖ)
@@ -91,18 +124,18 @@ function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
   end
 
   # Initialize directions Gₖ such that Lₖ(Gₖ)ᵀ = (Wₖ)ᵀ
-  gx₂ₖ₋₁ = kzeros(S, m)
-  gy₂ₖ₋₁ = kzeros(S, n)
-  gx₂ₖ   = kzeros(S, m)
-  gy₂ₖ   = kzeros(S, n)
+  gx₂ₖ₋₁ .= zero(T)
+  gy₂ₖ₋₁ .= zero(T)
+  gx₂ₖ   .= zero(T)
+  gy₂ₖ   .= zero(T)
 
   # Compute ‖r₀‖² = (γ₁)² + (β₁)²
   rNorm = sqrt(γₖ^2 + βₖ^2)
-  rNorms = [rNorm;]
+  rNorms = history ? [rNorm] : T[]
   ε = atol + rtol * rNorm
 
-  verbose && @printf("%5s  %7s  %8s  %7s  %7s\n", "k", "‖rₖ‖", "αₖ", "βₖ₊₁", "γₖ₊₁")
-  verbose && @printf("%5d  %7.1e  %8s  %7.1e  %7.1e\n", iter, rNorm, " ✗ ✗ ✗ ✗", βₖ, γₖ)
+  (verbose > 0) && @printf("%5s  %7s  %8s  %7s  %7s\n", "k", "‖rₖ‖", "αₖ", "βₖ₊₁", "γₖ₊₁")
+  display(iter, verbose) && @printf("%5d  %7.1e  %8s  %7.1e  %7.1e\n", iter, rNorm, " ✗ ✗ ✗ ✗", βₖ, γₖ)
 
   # Set up workspace.
   d₂ₖ₋₃ = d₂ₖ₋₂ = zero(T)
@@ -127,8 +160,8 @@ function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
     # AUₖ  = EVₖTₖ    + βₖ₊₁Evₖ₊₁(eₖ)ᵀ = EVₖ₊₁Tₖ₊₁.ₖ
     # AᵀVₖ = FUₖ(Tₖ)ᵀ + γₖ₊₁Fuₖ₊₁(eₖ)ᵀ = FUₖ₊₁(Tₖ.ₖ₊₁)ᵀ
 
-    q = A  * uₖ  # Forms Evₖ₊₁ : q ← Auₖ
-    p = Aᵀ * vₖ  # Forms Fuₖ₊₁ : p ← Aᵀvₖ
+    mul!(q, A , uₖ)  # Forms Evₖ₊₁ : q ← Auₖ
+    mul!(p, Aᵀ, vₖ)  # Forms Fuₖ₊₁ : p ← Aᵀvₖ
 
     if iter ≥ 2
       @kaxpy!(m, -γₖ, M⁻¹vₖ₋₁, q)  # q ← q - γₖ * M⁻¹vₖ₋₁
@@ -233,8 +266,8 @@ function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
     @. yₖ += π₂ₖ₋₁ * gy₂ₖ₋₁ + π₂ₖ * gy₂ₖ
 
     # Compute vₖ₊₁ and uₖ₊₁
-    vₖ₊₁ = M * q  # βₖ₊₁vₖ₊₁ = MAuₖ  - γₖvₖ₋₁ - αₖvₖ
-    uₖ₊₁ = N * p  # γₖ₊₁uₖ₊₁ = NAᵀvₖ - βₖuₖ₋₁ - αₖuₖ
+    MisI || mul!(vₖ₊₁, M, q)  # βₖ₊₁vₖ₊₁ = MAuₖ  - γₖvₖ₋₁ - αₖvₖ
+    NisI || mul!(uₖ₊₁, N, p)  # γₖ₊₁uₖ₊₁ = NAᵀvₖ - βₖuₖ₋₁ - αₖuₖ
 
     βₖ₊₁ = sqrt(@kdot(m, vₖ₊₁, q))  # βₖ₊₁ = ‖vₖ₊₁‖_E
     γₖ₊₁ = sqrt(@kdot(n, uₖ₊₁, p))  # γₖ₊₁ = ‖uₖ₊₁‖_F
@@ -255,7 +288,7 @@ function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
 
     # Compute ‖rₖ‖² = (γₖ₊₁ζ₂ₖ₋₁)² + (βₖ₊₁ζ₂ₖ)²
     rNorm = sqrt((γₖ₊₁ * (π₂ₖ₋₁ - δₖ*π₂ₖ))^2 + (βₖ₊₁ * π₂ₖ)^2)
-    push!(rNorms, rNorm)
+    history && push!(rNorms, rNorm)
 
     # Update βₖ, γₖ, π₂ₖ₋₃, π₂ₖ₋₂, d₂ₖ₋₃, d₂ₖ₋₂, δₖ₋₁, vₖ, uₖ.
     βₖ    = βₖ₊₁
@@ -265,15 +298,13 @@ function tricg(A, b :: AbstractVector{T}, c :: AbstractVector{T};
     d₂ₖ₋₃ = d₂ₖ₋₁
     d₂ₖ₋₂ = d₂ₖ
     δₖ₋₁  = δₖ
-    MisI || (vₖ = vₖ₊₁)
-    NisI || (uₖ = uₖ₊₁)
 
     # Update stopping criterion.
     solved = rNorm ≤ ε
     tired = iter ≥ itmax
-    verbose && @printf("%5d  %7.1e  %8.1e  %7.1e  %7.1e\n", iter, rNorm, αₖ, βₖ₊₁, γₖ₊₁)
+    display(iter, verbose) && @printf("%5d  %7.1e  %8.1e  %7.1e  %7.1e\n", iter, rNorm, αₖ, βₖ₊₁, γₖ₊₁)
   end
-  verbose && @printf("\n")
+  (verbose > 0) && @printf("\n")
   status = tired ? "maximum number of iterations exceeded" : "solution good enough given atol and rtol"
   stats = SimpleStats(solved, false, rNorms, T[], status)
   return (xₖ, yₖ, stats)
