@@ -111,7 +111,7 @@ end
 function lslq!(solver :: LslqSolver{T,S}, A, b :: AbstractVector{T};
                M=I, N=I, sqd :: Bool=false, λ :: T=zero(T),
                atol :: T=√eps(T), btol :: T=√eps(T), etol :: T=√eps(T),
-               window :: Int=5, utol :: T=√eps(T), itmax :: Int=0,
+               rtol :: T=√eps(T), window :: Int=5, utol :: T=√eps(T), itmax :: Int=0,
                σ :: T=zero(T), conlim :: T=1/√eps(T), verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, S <: DenseVector{T}}
 
   m, n = size(A)
@@ -153,8 +153,7 @@ function lslq!(solver :: LslqSolver{T,S}, A, b :: AbstractVector{T};
   Mu .= b
   MisI || mul!(u, M, Mu)
   β₁ = sqrt(@kdot(m, u, Mu))
-  β₁ == 0 && return (x_lq, kzeros(S, n), err_lbnds, err_ubnds_lq, err_ubnds_cg,
-                       SimpleStats(true, false, [zero(T)], [zero(T)], "x = 0 is a zero-residual solution"))
+  β₁ == 0 && return (x_lq, SimpleStats(true, false, [zero(T)], [zero(T)], "x = 0 is a zero-residual solution"))
   β = β₁
 
   @kscal!(m, one(T)/β₁, u)
@@ -165,8 +164,7 @@ function lslq!(solver :: LslqSolver{T,S}, A, b :: AbstractVector{T};
   α = sqrt(@kdot(n, v, Nv))  # = α₁
 
   # Aᵀb = 0 so x = 0 is a minimum least-squares solution
-  α == 0 && return (x_lq, kzeros(S, n), err_lbnds, err_ubnds_lq, err_ubnds_cg,
-                      SimpleStats(true, false, [β₁], [zero(T)], "x = 0 is a minimum least-squares solution"))
+  α == 0 && return (x_lq, SimpleStats(true, false, [β₁], [zero(T)], "x = 0 is a minimum least-squares solution"))
   @kscal!(n, one(T)/α, v)
   NisI || @kscal!(n, one(T)/α, Nv)
 
@@ -215,7 +213,7 @@ function lslq!(solver :: LslqSolver{T,S}, A, b :: AbstractVector{T};
   display(iter, verbose) && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e  %7.1e  %7.1e\n", 1, rNorm, ArNorm, β, α, c, s, Anorm², Acond, xlqNorm)
 
   status = "unknown"
-  solved = solved_mach = solved_lim = (rNorm ≤ atol)
+  solved = solved_mach = solved_lim = (rNorm ≤ atol + β₁ * rtol)
   tired  = iter ≥ itmax
   ill_cond = ill_cond_mach = ill_cond_lim = false
   zero_resid = zero_resid_mach = zero_resid_lim = false
@@ -315,11 +313,11 @@ function lslq!(solver :: LslqSolver{T,S}, A, b :: AbstractVector{T};
       fwd_err_ubnd = err_ubnd_cg ≤ utol * sqrt(xcgNorm²)
     end
 
-    test1 = rNorm / β₁
+    test1 = rNorm
     test2 = ArNorm / (Anorm * rNorm)
     test3 = 1 / Acond
     t1    = test1 / (one(T) + Anorm * xlqNorm / β₁)
-    rtol  = btol + atol * Anorm * xlqNorm / β₁
+    #rtol  = btol + atol * Anorm * xlqNorm / β₁
 
     display(iter, verbose) && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e  %7.1e  %7.1e\n", 1 + 2 * iter, rNorm, ArNorm, β, α, c, s, Anorm, Acond, xlqNorm)
 
@@ -352,17 +350,17 @@ function lslq!(solver :: LslqSolver{T,S}, A, b :: AbstractVector{T};
 
     # Stopping conditions that do not depend on user input.
     # This is to guard against tolerances that are unreasonably small.
-    ill_cond_mach = (one(T) + test3 ≤ one(T))
-    solved_mach = (one(T) + test2 ≤ one(T))
-    zero_resid_mach = (one(T) + t1 ≤ one(T))
+    # ill_cond_mach = (one(T) + test3 ≤ one(T))
+    # solved_mach = (one(T) + test2 ≤ one(T))
+    # zero_resid_mach = (one(T) + t1 ≤ one(T))
 
     # Stopping conditions based on user-provided tolerances.
     tired  = iter ≥ itmax
-    ill_cond_lim = (test3 ≤ ctol)
-    solved_lim = (test2 ≤ atol)
-    zero_resid_lim = (test1 ≤ rtol)
+    # ill_cond_lim = (test3 ≤ ctol)
+    # solved_lim = (test2 ≤ atol)
+    zero_resid_lim = (test1 ≤ atol + β₁ * rtol)
 
-    ill_cond = ill_cond_mach | ill_cond_lim
+    # ill_cond = ill_cond_mach | ill_cond_lim
     solved = solved_mach | solved_lim | zero_resid_mach | zero_resid_lim | fwd_err_lbnd | fwd_err_ubnd
 
     iter = iter + 1
@@ -382,5 +380,5 @@ function lslq!(solver :: LslqSolver{T,S}, A, b :: AbstractVector{T};
   fwd_err_ubnd  && (status = "forward error upper bound small enough")
 
   stats = SimpleStats(solved, !zero_resid, rNorms, ArNorms, status)
-  return (x_lq, x_cg, err_lbnds, err_ubnds_lq, err_ubnds_cg, stats)
+  return (x_lq, stats)
 end

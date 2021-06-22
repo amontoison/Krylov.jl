@@ -230,7 +230,7 @@ function usymqr!(solver :: UsymqrSolver{T,S}, A, b :: AbstractVector{T}, c :: Ab
     # Update stopping criterion.
     iter == 1 && (κ = atol + rtol * AᵀrNorm)
     solved = rNorm ≤ ε
-    inconsistent = !solved && AᵀrNorm ≤ κ
+    # inconsistent = !solved && AᵀrNorm ≤ κ
     tired = iter ≥ itmax
     display(iter, verbose) && @printf("%5d  %7.1e  %7.1e\n", iter, rNorm, AᵀrNorm)
   end

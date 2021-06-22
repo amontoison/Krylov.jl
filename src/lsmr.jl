@@ -294,13 +294,13 @@ function lsmr!(solver :: LsmrSolver{T,S}, A, b :: AbstractVector{T};
 
     # Stopping conditions based on user-provided tolerances.
     tired  = iter ≥ itmax
-    ill_cond_lim = (test3 ≤ ctol)
-    solved_lim = (test2 ≤ axtol)
-    solved_opt = ArNorm ≤ atol + rtol * ArNorm0
+    # ill_cond_lim = (test3 ≤ ctol)
+    # solved_lim = (test2 ≤ axtol)
+    # solved_opt = ArNorm ≤ atol + rtol * ArNorm0
     zero_resid_lim = (test1 ≤ rNormtol)
     iter ≥ window && (fwd_err = err_lbnd ≤ etol * sqrt(xENorm²))
 
-    ill_cond = ill_cond_mach | ill_cond_lim
+    # ill_cond = ill_cond_mach | ill_cond_lim
     solved = solved_mach | solved_lim | solved_opt | zero_resid_mach | zero_resid_lim | fwd_err | on_boundary
   end
   (verbose > 0) && @printf("\n")

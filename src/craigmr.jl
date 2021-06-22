@@ -175,7 +175,8 @@ function craigmr!(solver :: CraigmrSolver{T,S}, A, b :: AbstractVector{T};
 
   status = "unknown"
   solved = rNorm ≤ ɛ_c
-  inconsistent = (rNorm > 100 * ɛ_c) & (ArNorm ≤ ɛ_i)
+  inconsistent = false
+  # inconsistent = (rNorm > 100 * ɛ_c) & (ArNorm ≤ ɛ_i)
   tired  = iter ≥ itmax
 
   while ! (solved || inconsistent || tired)
@@ -272,7 +273,7 @@ function craigmr!(solver :: CraigmrSolver{T,S}, A, b :: AbstractVector{T};
     ρbar = -c * αhat
 
     solved = rNorm ≤ ɛ_c
-    inconsistent = (rNorm > 100 * ɛ_c) & (ArNorm ≤ ɛ_i)
+    # inconsistent = (rNorm > 100 * ɛ_c) & (ArNorm ≤ ɛ_i)
     tired  = iter ≥ itmax
   end
   (verbose > 0) && @printf("\n")

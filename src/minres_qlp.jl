@@ -286,7 +286,7 @@ function minres_qlp!(solver :: MinresQlpSolver{T,S}, A, b :: AbstractVector{T};
     # Update stopping criterion.
     iter == 1 && (κ = (atol + rtol * ArNorm) / 100)
     solved = rNorm ≤ ε
-    inconsistent = !solved && ArNorm ≤ κ
+    # inconsistent = !solved && ArNorm ≤ κ
     tired = iter ≥ itmax
 
     # Update variables
