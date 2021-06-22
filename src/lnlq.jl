@@ -22,10 +22,13 @@
 # Alexis Montoison, <alexis.montoison@polymtl.ca>
 # Montréal, March 2019 -- Alès, January 2020.
 
-export lnlq
+export lnlq, lnlq!
 
 """
-    (x, y, stats) = lnlq(A, b; M, N, sqd, λ, atol, rtol, itmax, transfer_to_craig, verbose)
+    (x, y, stats) = lnlq(A, b::AbstractVector{T};
+                         M=I, N=I, sqd::Bool=false, λ::T=zero(T),
+                         atol::T=√eps(T), rtol::T=√eps(T), itmax::Int=0,
+                         transfer_to_craig::Bool=true, verbose::Int=0, history::Bool=false) where T <: AbstractFloat
 
 Find the least-norm solution of the consistent linear system
 
@@ -56,51 +59,72 @@ If `sqd = false`, LNLQ solves the symmetric and indefinite system
 In this case, M can still be specified and indicates the weighted norm in which residuals are measured.
 
 In this implementation, both the x and y-parts of the solution are returned.
+
+#### Reference
+
+* R. Estrin, D. Orban, M.A. Saunders, *LNLQ: An Iterative Method for Least-Norm Problems with an Error Minimization Property*, SIAM Journal on Matrix Analysis and Applications, 40(3), pp. 1102--1124, 2019.
 """
-function lnlq(A, b :: AbstractVector{T};
-              M=I, N=I, sqd :: Bool=false, λ :: T=zero(T),
-              atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0,
-              transfer_to_craig :: Bool=false, verbose :: Bool=false) where T <: AbstractFloat
+function lnlq(A, b :: AbstractVector{T}; kwargs...) where T <: AbstractFloat
+  solver = LnlqSolver(A, b)
+  lnlq!(solver, A, b; kwargs...)
+end
+
+function lnlq!(solver :: LnlqSolver{T,S}, A, b :: AbstractVector{T};
+               M=I, N=I, sqd :: Bool=false, λ :: T=zero(T),
+               atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0,
+               transfer_to_craig :: Bool=true, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, S <: DenseVector{T}}
 
   m, n = size(A)
-  size(b, 1) == m || error("Inconsistent problem size")
-  verbose && @printf("LNLQ: system of %d equations in %d variables\n", m, n)
+  length(b) == m || error("Inconsistent problem size")
+  (verbose > 0) && @printf("LNLQ: system of %d equations in %d variables\n", m, n)
 
-  # Tests (M == I)ₘ and (N == I)ₙ
+  # Tests M == Iₘ and N == Iₙ
   MisI = (M == I)
   NisI = (N == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
+  ktypeof(b) == S || error("ktypeof(b) ≠ $S")
   MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
   NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
   # Compute the adjoint of A
   Aᵀ = A'
 
-  # Determine the storage type of b
-  S = typeof(b)
-
-  # Initial solutions (x₀, y₀) and residual norm ‖r₀‖.
-  x = kzeros(S, n)
-  y = kzeros(S, m)
-
   # When solving a SQD system, set regularization parameter λ = 1.
   sqd && (λ = one(T))
+
+  # Set up workspace.
+  allocate_if(!MisI, solver, :u, S, m)
+  allocate_if(!NisI, solver, :v, S, n)
+  allocate_if(λ > 0, solver, :q, S, n)
+  x, Nv, Aᵀu, y, w̄, Mu, Av, q = solver.x, solver.Nv, solver.Aᵀu, solver.y, solver.w̄, solver.Mu, solver.Av, solver.q
+  u = MisI ? Mu : solver.u
+  v = NisI ? Nv : solver.v
+
+  # Initial solutions (x₀, y₀) and residual norm ‖r₀‖.
+  x .= zero(T)
+  y .= zero(T)
 
   bNorm = @knrm2(m, b)
   bNorm == 0 && return x, y, SimpleStats(true, false, [bNorm], T[], "x = 0 is a zero-residual solution")
 
-  rNorms = [bNorm;]
+  rNorms = history ? [bNorm] : T[]
   ε = atol + rtol * bNorm
 
-  iter = 1
+  iter = 0
   itmax == 0 && (itmax = m + n)
+
+  (verbose > 0) && @printf("%5s  %7s\n", "k", "‖rₖ‖")
+  display(iter, verbose) && @printf("%5d  %7.1e\n", iter, bNorm)
+
+  # Update iteration index
+  iter = iter + 1
 
   # Initialize generalized Golub-Kahan bidiagonalization.
   # β₁Mu₁ = b.
-  Mu = copy(b)
-  u  = M * Mu                 # u₁ = M⁻¹ * Mu₁
+  Mu .= b
+  MisI || mul!(u, M, Mu)      # u₁ = M⁻¹ * Mu₁
   βₖ = sqrt(@kdot(m, u, Mu))  # β₁ = ‖u₁‖_M
   if βₖ ≠ 0
     @kscal!(m, 1 / βₖ, u)
@@ -108,27 +132,27 @@ function lnlq(A, b :: AbstractVector{T};
   end
 
   # α₁Nv₁ = Aᵀu₁.
-  Aᵀu = Aᵀ * u
-  Nv  = copy(Aᵀu)
-  v   = N * Nv                 # v₁ = N⁻¹ * Nv₁
-  αₖ  = sqrt(@kdot(n, v, Nv))  # α₁ = ‖v₁‖_N
+  mul!(Aᵀu, Aᵀ, u)
+  Nv .= Aᵀu
+  NisI || mul!(v, N, Nv)      # v₁ = N⁻¹ * Nv₁
+  αₖ = sqrt(@kdot(n, v, Nv))  # α₁ = ‖v₁‖_N
   if αₖ ≠ 0
     @kscal!(n, 1 / αₖ, v)
     NisI || @kscal!(n, 1 / αₖ, Nv)
   end
 
-  # Set up workspace.
-  w̄ = copy(u)         # Direction w̄₁
-  cₖ = sₖ = zero(T)   # Givens sines and cosines used for the LQ factorization of (Lₖ)ᵀ
-  ζₖ₋₁ = zero(T)      # ζₖ₋₁ and ζbarₖ are the last components of z̅ₖ
-  ηₖ = zero(T)        # Coefficient of M̅ₖ
+  w̄ .= u             # Direction w̄₁
+  cₖ = sₖ = zero(T)  # Givens sines and cosines used for the LQ factorization of (Lₖ)ᵀ
+  ζₖ₋₁ = zero(T)     # ζₖ₋₁ and ζbarₖ are the last components of z̅ₖ
+  ηₖ = zero(T)       # Coefficient of M̅ₖ
 
-  # Regularization.
-  λₖ  = λ                 # λ₁ = λ
-  cpₖ = spₖ = one(T)      # Givens sines and cosines used to zero out λₖ
-  cdₖ = sdₖ = one(T)      # Givens sines and cosines used to define λₖ₊₁
-  λ > 0 && (q = copy(v))  # Additional vector needed to update x, by definition q₀ = 0
+  # Variable used for the regularization.
+  λₖ  = λ             # λ₁ = λ
+  cpₖ = spₖ = one(T)  # Givens sines and cosines used to zero out λₖ
+  cdₖ = sdₖ = one(T)  # Givens sines and cosines used to define λₖ₊₁
+  λ > 0 && (q .= v)   # Additional vector needed to update x, by definition q₀ = 0
 
+  # Initialize the regularization.
   if λ > 0
     #        k    2k      k   2k           k      2k
     # k   [  αₖ   λₖ ] [ cpₖ  spₖ ] = [  αhatₖ    0   ]
@@ -150,7 +174,7 @@ function lnlq(A, b :: AbstractVector{T};
   # [ •           •  •  βₖ]   [ •           •   •   •   0   ]
   # [ 0  •  •  •  •  0  αₖ]   [ 0   •   •   •   0   ηₖ ϵbarₖ]
 
-  ϵbarₖ = αhatₖ       # ϵbar₁ = αhat₁
+  ϵbarₖ = αhatₖ  # ϵbar₁ = αhat₁
 
   # Hₖ = Bₖ(Lₖ)ᵀ = [   Lₖ(Lₖ)ᵀ   ] ⟹ (Hₖ₋₁)ᵀ = [Lₖ₋₁Mₖ₋₁  0] Qₖ
   #                [ αₖβₖ₊₁(eₖ)ᵀ ]
@@ -164,11 +188,8 @@ function lnlq(A, b :: AbstractVector{T};
 
   # Stopping criterion.
   solved_lq = solved_cg = false
-  tired = iter ≥ itmax
+  tired = false
   status = "unknown"
-
-  verbose && @printf("%5s  %7s\n", "k", "‖rₖ‖")
-  verbose && @printf("%5d  %7.1e\n", iter, bNorm)
 
   while !(solved_lq || solved_cg || tired)
 
@@ -202,9 +223,9 @@ function lnlq(A, b :: AbstractVector{T};
     #      [ βₖ₊₁(eₖ)ᵀ ]
 
     # βₖ₊₁Muₖ₊₁ = Avₖ - αₖMuₖ
-    Av = A * v
+    mul!(Av, A, v)
     @kaxpby!(m, one(T), Av, -αₖ, Mu)
-    u = M * Mu                    # uₖ₊₁ = M⁻¹ * Muₖ₊₁
+    MisI || mul!(u, M, Mu)        # uₖ₊₁ = M⁻¹ * Muₖ₊₁
     βₖ₊₁ = sqrt(@kdot(m, u, Mu))  # βₖ₊₁ = ‖uₖ₊₁‖_M
     if βₖ₊₁ ≠ 0
       @kscal!(m, 1 / βₖ₊₁, u)
@@ -212,15 +233,16 @@ function lnlq(A, b :: AbstractVector{T};
     end
 
     # αₖ₊₁Nvₖ₊₁ = Aᵀuₖ₊₁ - βₖ₊₁Nvₖ
-    Aᵀu = Aᵀ * u
+    mul!(Aᵀu, Aᵀ, u)
     @kaxpby!(n, one(T), Aᵀu, -βₖ₊₁, Nv)
-    v = N * Nv                    # vₖ₊₁ = N⁻¹ * Nvₖ₊₁
+    NisI || mul!(v, N, Nv)        # vₖ₊₁ = N⁻¹ * Nvₖ₊₁
     αₖ₊₁ = sqrt(@kdot(n, v, Nv))  # αₖ₊₁ = ‖vₖ₊₁‖_N
     if αₖ₊₁ ≠ 0
       @kscal!(n, 1 / αₖ₊₁, v)
       NisI || @kscal!(n, 1 / αₖ₊₁, Nv)
     end
 
+    # Continue the regularization.
     if λ > 0
       #        k    2k      k   2k           k      2k
       # k   [  αₖ   λₖ ] [ cpₖ  spₖ ] = [  αhatₖ    0   ]
@@ -276,7 +298,7 @@ function lnlq(A, b :: AbstractVector{T};
     else
       rNorm_lq = abs(αhatₖ) * √((ϵbarₖ * ζbarₖ)^2 + (βhatₖ₊₁ * sₖ * ζₖ₋₁)^2)
     end
-    push!(rNorms, rNorm_lq)
+    history && push!(rNorms, rNorm_lq)
 
     # Compute residual norm ‖(rᶜ)ₖ‖ = |βₖ₊₁ * τₖ|
     if transfer_to_craig
@@ -305,12 +327,12 @@ function lnlq(A, b :: AbstractVector{T};
     tired = iter ≥ itmax
     solved_lq = rNorm_lq ≤ ε
     solved_cg = transfer_to_craig && rNorm_cg ≤ ε
-    verbose && @printf("%5d  %7.1e\n", iter, rNorm_lq)
+    display(iter, verbose) && @printf("%5d  %7.1e\n", iter, rNorm_lq)
 
     # Update iteration index.
     iter = iter + 1
   end
-  verbose && @printf("\n")
+  (verbose > 0) && @printf("\n")
 
   if solved_cg
     if λ > 0

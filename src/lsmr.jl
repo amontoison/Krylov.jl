@@ -1,8 +1,38 @@
-export lsmr
+# An implementation of LSMR for the solution of the
+# over-determined linear least-squares problem
+#
+#  minimize ‖Ax - b‖
+#
+# equivalently, of the normal equations
+#
+#  AᵀAx = Aᵀb.
+#
+# LSMR is formally equivalent to applying MINRES to the normal equations
+# but should be more stable. It is also formally equivalent to CRLS though
+# LSMR should be expected to be more stable on ill-conditioned or poorly
+# scaled problems.
+#
+# This implementation follows the original implementation by
+# Michael Saunders described in
+#
+# D. C.-L. Fong and M. A. Saunders, LSMR: An Iterative Algorithm for Sparse
+# Least Squares Problems, SIAM Journal on Scientific Computing, 33(5),
+# pp. 2950--2971, 2011.
+#
+# Dominique Orban, <dominique.orban@gerad.ca>
+# Montreal, QC, May 2015.
+
+export lsmr, lsmr!
 
 
 """
-    (x, stats) = lsmr(A, b; M, N, sqd, λ, axtol, btol, atol, rtol, etol, window, itmax, conlim, radius, verbose)
+    (x, stats) = lsmr(A, b::AbstractVector{T};
+                      M=I, N=I, sqd::Bool=false,
+                      λ::T=zero(T), axtol::T=√eps(T), btol::T=√eps(T),
+                      atol::T=zero(T), rtol::T=zero(T),
+                      etol::T=√eps(T), window::Int=5,
+                      itmax::Int=0, conlim::T=1/√eps(T),
+                      radius::T=zero(T), verbose::Int=0, history::Bool=false) where T <: AbstractFloat
 
 Solve the regularized linear least-squares problem
 
@@ -25,7 +55,9 @@ we solve the symmetric and quasi-definite system
     [ E    A ] [ r ]   [ b ]
     [ Aᵀ  -F ] [ x ] = [ 0 ],
 
-where E = M⁻¹  and F = N⁻¹.
+where E and F are symmetric and positive definite.
+LSMR is then equivalent to applying MINRES to `(AᵀE⁻¹A + F)y = AᵀE⁻¹b` with `r = E⁻¹(b - Ax)`.
+Preconditioners M = E⁻¹ ≻ 0 and N = F⁻¹ ≻ 0 may be provided in the form of linear operators.
 
 If `sqd` is set to `false` (the default), we solve the symmetric and
 indefinite system
@@ -33,57 +65,68 @@ indefinite system
     [ E    A ] [ r ]   [ b ]
     [ Aᵀ   0 ] [ x ] = [ 0 ].
 
-In this case, `N` can still be specified and indicates the norm
-in which `x` should be measured.
+In this case, `N` can still be specified and indicates the weighted norm in which `x` and `Aᵀr` should be measured.
+`r` can be recovered by computing `E⁻¹(b - Ax)`.
+
+#### Reference
+
+* D. C.-L. Fong and M. A. Saunders, *LSMR: An Iterative Algorithm for Sparse*, Least Squares Problems, SIAM Journal on Scientific Computing, 33(5), pp. 2950--2971, 2011.
 """
-function lsmr(A, b :: AbstractVector{T};
-              M=I, N=I, sqd :: Bool=false,
-              λ :: T=zero(T), axtol :: T=√eps(T), btol :: T=√eps(T),
-              atol :: T=√eps(T), rtol :: T=√eps(T),
-              etol :: T=√eps(T), window :: Int=5,
-              itmax :: Int=0, conlim :: T=1/√eps(T),
-              radius :: T=zero(T), verbose :: Bool=false) where T <: AbstractFloat
+function lsmr(A, b :: AbstractVector{T}; kwargs...) where T <: AbstractFloat
+  solver = LsmrSolver(A, b)
+  lsmr!(solver, A, b; kwargs...)
+end
+
+function lsmr!(solver :: LsmrSolver{T,S}, A, b :: AbstractVector{T};
+               M=I, N=I, sqd :: Bool=false,
+               λ :: T=zero(T), axtol :: T=√eps(T), btol :: T=√eps(T),
+               atol :: T=zero(T), rtol :: T=zero(T),
+               etol :: T=√eps(T), window :: Int=5,
+               itmax :: Int=0, conlim :: T=1/√eps(T),
+               radius :: T=zero(T), verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, S <: DenseVector{T}}
 
   m, n = size(A)
-  size(b, 1) == m || error("Inconsistent problem size")
-  verbose && @printf("LSMR: system of %d equations in %d variables\n", m, n)
+  length(b) == m || error("Inconsistent problem size")
+  (verbose > 0) && @printf("LSMR: system of %d equations in %d variables\n", m, n)
 
-  # Compute the adjoint of A
-  Aᵀ = A'
-
-  # Determine the storage type of b
-  S = typeof(b)
-
-  # Tests (M == I)ₙ and (N == I)ₘ
+  # Tests M == Iₙ and N == Iₘ
   MisI = (M == I)
   NisI = (N == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
+  ktypeof(b) == S || error("ktypeof(b) ≠ $S")
   MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
   NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
   # Compute the adjoint of A
   Aᵀ = A'
 
+  # Set up workspace.
+  allocate_if(!MisI, solver, :u, S, m)
+  allocate_if(!NisI, solver, :v, S, n)
+  x, Nv, Aᵀu, h, hbar, Mu, Av = solver.x, solver.Nv, solver.Aᵀu, solver.h, solver.hbar, solver.Mu, solver.Av
+  u = MisI ? Mu : solver.u
+  v = NisI ? Nv : solver.v
+
   # If solving an SQD system, set regularization to 1.
   sqd && (λ = one(T))
   ctol = conlim > 0 ? 1/conlim : zero(T)
-  x = kzeros(S, n)
+  x .= zero(T)
 
   # Initialize Golub-Kahan process.
   # β₁ M u₁ = b.
-  Mu = copy(b)
-  u = M * Mu
+  Mu .= b
+  MisI || mul!(u, M, Mu)
   β₁ = sqrt(@kdot(m, u, Mu))
   β₁ == 0 && return (x, SimpleStats(true, false, [zero(T)], [zero(T)], "x = 0 is a zero-residual solution"))
   β = β₁
 
   @kscal!(m, one(T)/β₁, u)
   MisI || @kscal!(m, one(T)/β₁, Mu)
-  Aᵀu = Aᵀ * u
-  Nv = copy(Aᵀu)
-  v = N * Nv
+  mul!(Aᵀu, Aᵀ, u)
+  Nv .= Aᵀu
+  NisI || mul!(v, N, Nv)
   α = sqrt(@kdot(n, v, Nv))
 
   ζbar = α * β
@@ -110,30 +153,27 @@ function lsmr(A, b :: AbstractVector{T};
   # Items for use in stopping rules.
   ctol = conlim > 0 ? 1 / conlim : zero(T)
   rNorm = β
-  rNorms = [rNorm]
+  rNorms = history ? [rNorm] : T[]
   ArNorm = ArNorm0 = α * β
-  ArNorm₁ = ArNorm
-  ArNorms = [ArNorm]
+  ArNorms = history ? [ArNorm] : T[]
 
   xENorm² = zero(T)
   err_lbnd = zero(T)
   err_vec = zeros(T, window)
 
-  verbose && @printf("%5s  %7s  %7s  %7s  %7s  %8s  %8s  %7s\n",
-                     "Aprod", "‖r‖", "‖Aᵀr‖", "β", "α", "cos", "sin", "‖A‖²")
-  verbose && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e\n",
-                     1, β₁, α, β₁, α, 0, 1, Anorm²)
+  iter = 0
+  itmax == 0 && (itmax = m + n)
+
+  (verbose > 0) && @printf("%5s  %7s  %7s  %7s  %7s  %8s  %8s  %7s\n", "Aprod", "‖r‖", "‖Aᵀr‖", "β", "α", "cos", "sin", "‖A‖²")
+  display(iter, verbose) && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e\n", 1, β₁, α, β₁, α, 0, 1, Anorm²)
 
   # Aᵀb = 0 so x = 0 is a minimum least-squares solution
   α == 0 && return (x, SimpleStats(true, false, [β₁], [zero(T)], "x = 0 is a minimum least-squares solution"))
   @kscal!(n, one(T)/α, v)
   NisI || @kscal!(n, one(T)/α, Nv)
 
-  h = copy(v)
-  hbar = kzeros(S, n)
-
-  iter = 0
-  itmax == 0 && (itmax = m + n)
+  h .= v
+  hbar .= zero(T)
 
   status = "unknown"
   on_boundary = false
@@ -142,25 +182,24 @@ function lsmr(A, b :: AbstractVector{T};
   ill_cond = ill_cond_mach = ill_cond_lim = false
   zero_resid = zero_resid_mach = zero_resid_lim = false
   fwd_err = false
-  solved2 = ArNorm ≤ atol + rtol * ArNorm₁
 
-  while ! (solved2 || tired)
+  while ! (solved || tired || ill_cond)
     iter = iter + 1
 
     # Generate next Golub-Kahan vectors.
     # 1. βₖ₊₁Muₖ₊₁ = Avₖ - αₖMuₖ
-    Av = A * v
+    mul!(Av, A, v)
     @kaxpby!(m, one(T), Av, -α, Mu)
-    u = M * Mu
+    MisI || mul!(u, M, Mu)
     β = sqrt(@kdot(m, u, Mu))
     if β ≠ 0
       @kscal!(m, one(T)/β, u)
       MisI || @kscal!(m, one(T)/β, Mu)
 
       # 2. αₖ₊₁Nvₖ₊₁ = Aᵀuₖ₊₁ - βₖ₊₁Nvₖ
-      Aᵀu = Aᵀ * u
+      mul!(Aᵀu, Aᵀ, u)
       @kaxpby!(n, one(T), Aᵀu, -β, Nv)
-      v = N * Nv
+      NisI || mul!(v, N, Nv)
       α = sqrt(@kdot(n, v, Nv))
       if α ≠ 0
         @kscal!(n, one(T)/α, v)
@@ -222,7 +261,7 @@ function lsmr(A, b :: AbstractVector{T};
     τd = (ζ - θtilde * τtildeold) / ρdold
     d = d + βcheck * βcheck
     rNorm = sqrt(d + (βd - τd)^2 + βdd * βdd)
-    push!(rNorms, rNorm)
+    history && push!(rNorms, rNorm)
 
     # Estimate ‖A‖.
     Anorm² += β * β
@@ -236,7 +275,7 @@ function lsmr(A, b :: AbstractVector{T};
 
     # Test for convergence.
     ArNorm = abs(ζbar)
-    push!(ArNorms, ArNorm)
+    history && push!(ArNorms, ArNorm)
     xNorm = @knrm2(n, x)
 
     test1 = rNorm / β₁
@@ -245,8 +284,7 @@ function lsmr(A, b :: AbstractVector{T};
     t1    = test1 / (one(T) + Anorm * xNorm / β₁)
     rNormtol  = btol + axtol * Anorm * xNorm / β₁
 
-    verbose && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e\n",
-                       1 + 2 * iter, rNorm, ArNorm, β, α, c, s, Anorm²)
+    display(iter, verbose) && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e\n", 1 + 2 * iter, rNorm, ArNorm, β, α, c, s, Anorm²)
 
     # Stopping conditions that do not depend on user input.
     # This is to guard against tolerances that are unreasonably small.
@@ -264,21 +302,17 @@ function lsmr(A, b :: AbstractVector{T};
 
     ill_cond = ill_cond_mach | ill_cond_lim
     solved = solved_mach | solved_lim | solved_opt | zero_resid_mach | zero_resid_lim | fwd_err | on_boundary
-    solved2 = ArNorm ≤ atol + rtol * ArNorm₁
   end
+  (verbose > 0) && @printf("\n")
 
-  tired   && (status = "maximum number of iterations exceeded")
-  solved2 && (status = "found approximate minimum least-squares solution")
+  tired         && (status = "maximum number of iterations exceeded")
+  ill_cond_mach && (status = "condition number seems too large for this machine")
+  ill_cond_lim  && (status = "condition number exceeds tolerance")
+  solved        && (status = "found approximate minimum least-squares solution")
+  zero_resid    && (status = "found approximate zero-residual solution")
+  fwd_err       && (status = "truncated forward error small enough")
+  on_boundary   && (status = "on trust-region boundary")
 
-  # tired         && (status = "maximum number of iterations exceeded")
-  # ill_cond_mach && (status = "condition number seems too large for this machine")
-  # ill_cond_lim  && (status = "condition number exceeds tolerance")
-  # solved        && (status = "found approximate minimum least-squares solution")
-  # solved2       && (status = "found approximate minimum least-squares solution")
-  # zero_resid    && (status = "found approximate zero-residual solution")
-  # fwd_err       && (status = "truncated forward error small enough")
-  # on_boundary   && (status = "on trust-region boundary")
-
-  stats = SimpleStats(solved2, false, rNorms, ArNorms, status)
+  stats = SimpleStats(solved, !zero_resid, rNorms, ArNorms, status)
   return (x, stats)
 end

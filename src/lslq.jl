@@ -1,8 +1,16 @@
-export lslq
+# Dominique Orban, <dominique.orban@gerad.ca>
+# Montreal, QC, November 2016-January 2017.
+
+export lslq, lslq!
 
 
 """
-    (x, stats) = lslq(A, b; M, N, sqd, λ, atol, btol, etol, window, utol, itmax, σ, conlim, verbose)
+    (x_lq, x_cg, err_lbnds, err_ubnds_lq, err_ubnds_cg, stats) =
+        lslq(A, b::AbstractVector{T};
+             M=I, N=I, sqd::Bool=false, λ::T=zero(T),
+             atol::T=√eps(T), btol::T=√eps(T), etol::T=√eps(T),
+             window::Int=5, utol::T=√eps(T), itmax::Int=0,
+             σ::T=zero(T), conlim::T=1/√eps(T), verbose::Int=0, history::Bool=false) where T <: AbstractFloat
 
 Solve the regularized linear least-squares problem
 
@@ -33,19 +41,25 @@ but is more stable.
 * `M::AbstractLinearOperator=I`: a symmetric and positive definite dual preconditioner
 * `N::AbstractLinearOperator=I`: a symmetric and positive definite primal preconditioner
 * `sqd::Bool=false` indicates whether or not we are solving a symmetric and quasi-definite augmented system
-  If `sqd = true`, we solve the symmetric and quasi-definite system
 
-      [ E    A ] [ r ]   [ b ]
-      [ Aᵀ  -F ] [ x ] = [ 0 ],
+If `sqd = true`, we solve the symmetric and quasi-definite system
 
-  where E = M⁻¹  and F = N⁻¹.
+    [ E    A ] [ r ]   [ b ]
+    [ Aᵀ  -F ] [ x ] = [ 0 ],
 
-  If `sqd = false`, we solve the symmetric and indefinite system
+where E and F are symmetric and positive definite.
+LSLQ is then equivalent to applying SYMMLQ to `(AᵀE⁻¹A + F)y = AᵀE⁻¹b` with `r = E⁻¹(b - Ax)`.
+Preconditioners M = E⁻¹ ≻ 0 and N = F⁻¹ ≻ 0 may be provided in the form of linear operators.
 
-      [ E    A ] [ r ]   [ b ]
-      [ Aᵀ   0 ] [ x ] = [ 0 ].
+If `sqd` is set to `false` (the default), we solve the symmetric and
+indefinite system
 
-  In this case, `N` can still be specified and indicates the norm in which `x` and the forward error should be measured.
+    [ E    A ] [ r ]   [ b ]
+    [ Aᵀ   0 ] [ x ] = [ 0 ].
+
+In this case, `N` can still be specified and indicates the weighted norm in which `x` and `Aᵀr` should be measured.
+`r` can be recovered by computing `E⁻¹(b - Ax)`.
+
 * `λ::Float64=0.0` is a regularization parameter (see the problem statement above)
 * `σ::Float64=0.0` is an underestimate of the smallest nonzero singular value of `A`---setting `σ` too large will result in an error in the course of the iterations
 * `atol::Float64=1.0e-8` is a stopping tolerance based on the residual
@@ -55,7 +69,7 @@ but is more stable.
 * `utol::Float64=1.0e-8` is a stopping tolerance based on the upper bound on the error
 * `itmax::Int=0` is the maximum number of iterations (0 means no imposed limit)
 * `conlim::Float64=1.0e+8` is the limit on the estimated condition number of `A` beyond which the solution will be abandoned
-* `verbose::Bool=false` determines verbosity.
+* `verbose::Int=0` determines verbosity.
 
 #### Return values
 
@@ -86,48 +100,58 @@ The iterations stop as soon as one of the following conditions holds true:
 
 #### References
 
-* R. Estrin, D. Orban and M. A. Saunders, *Estimates of the 2-Norm Forward Error for SYMMLQ and CG*, Cahier du GERAD G-2016-70, GERAD, Montreal, 2016. DOI http://dx.doi.org/10.13140/RG.2.2.19581.77288.
-* R. Estrin, D. Orban and M. A. Saunders, *LSLQ: An Iterative Method for Linear Least-Squares with an Error Minimization Property*, Cahier du GERAD G-2017-xx, GERAD, Montreal, 2017.
+* R. Estrin, D. Orban and M. A. Saunders, *Euclidean-norm error bounds for SYMMLQ and CG*, SIAM Journal on Matrix Analysis and Applications, 40(1), pp. 235--253, 2019.
+* R. Estrin, D. Orban and M. A. Saunders, *LSLQ: An Iterative Method for Linear Least-Squares with an Error Minimization Property*, SIAM Journal on Matrix Analysis and Applications, 40(1), pp. 254--275, 2019.
 """
-function lslq(A, b :: AbstractVector{T};
-              M=I, N=I, sqd :: Bool=false, λ :: T=zero(T),
-              atol :: T=√eps(T), btol :: T=√eps(T), etol :: T=√eps(T), rtol :: T=√eps(T),
-              window :: Int=5, utol :: T=√eps(T), itmax :: Int=0,
-              σ :: T=zero(T), conlim :: T=1/√eps(T), verbose :: Bool=false) where T <: AbstractFloat
+function lslq(A, b :: AbstractVector{T}; kwargs...) where T <: AbstractFloat
+  solver = LslqSolver(A, b)
+  lslq!(solver, A, b; kwargs...)
+end
+
+function lslq!(solver :: LslqSolver{T,S}, A, b :: AbstractVector{T};
+               M=I, N=I, sqd :: Bool=false, λ :: T=zero(T),
+               atol :: T=√eps(T), btol :: T=√eps(T), etol :: T=√eps(T),
+               window :: Int=5, utol :: T=√eps(T), itmax :: Int=0,
+               σ :: T=zero(T), conlim :: T=1/√eps(T), verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, S <: DenseVector{T}}
 
   m, n = size(A)
-  size(b, 1) == m || error("Inconsistent problem size")
-  verbose && @printf("LSLQ: system of %d equations in %d variables\n", m, n)
+  length(b) == m || error("Inconsistent problem size")
+  (verbose > 0) && @printf("LSLQ: system of %d equations in %d variables\n", m, n)
 
-  # Tests (M == I)ₙ and (N == I)ₘ
+  # Tests M == Iₙ and N == Iₘ
   MisI = (M == I)
   NisI = (N == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
+  ktypeof(b) == S || error("ktypeof(b) ≠ $S")
   MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
   NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
   # Compute the adjoint of A
   Aᵀ = A'
 
-  # Determine the storage type of b
-  S = typeof(b)
+  # Set up workspace.
+  allocate_if(!MisI, solver, :u, S, m)
+  allocate_if(!NisI, solver, :v, S, n)
+  x_lq, Nv, Aᵀu, w̄, Mu, Av = solver.x_lq, solver.Nv, solver.Aᵀu, solver.w̄, solver.Mu, solver.Av
+  u = MisI ? Mu : solver.u
+  v = NisI ? Nv : solver.v
 
   # If solving an SQD system, set regularization to 1.
   sqd && (λ = one(T))
   λ² = λ * λ
   ctol = conlim > 0 ? 1/conlim : zero(T)
 
-  x_lq = kzeros(S, n)   # LSLQ point
+  x_lq .= zero(T)  # LSLQ point
   err_lbnds = T[]
   err_ubnds_lq = T[]
   err_ubnds_cg = T[]
 
   # Initialize Golub-Kahan process.
   # β₁ M u₁ = b.
-  Mu = copy(b)
-  u = M * Mu
+  Mu .= b
+  MisI || mul!(u, M, Mu)
   β₁ = sqrt(@kdot(m, u, Mu))
   β₁ == 0 && return (x_lq, kzeros(S, n), err_lbnds, err_ubnds_lq, err_ubnds_cg,
                        SimpleStats(true, false, [zero(T)], [zero(T)], "x = 0 is a zero-residual solution"))
@@ -135,9 +159,9 @@ function lslq(A, b :: AbstractVector{T};
 
   @kscal!(m, one(T)/β₁, u)
   MisI || @kscal!(m, one(T)/β₁, Mu)
-  Aᵀu = Aᵀ * u
-  Nv = copy(Aᵀu)
-  v = N * Nv
+  mul!(Aᵀu, Aᵀ, u)
+  Nv .= Aᵀu
+  NisI || mul!(v, N, Nv)
   α = sqrt(@kdot(n, v, Nv))  # = α₁
 
   # Aᵀb = 0 so x = 0 is a minimum least-squares solution
@@ -159,7 +183,7 @@ function lslq(A, b :: AbstractVector{T};
   xcgNorm  = zero(T)
   xcgNorm² = zero(T)
 
-  w̄ = copy(v) # w̄₁ = v₁
+  w̄ .= v  # w̄₁ = v₁
 
   err_lbnd = zero(T)
   err_vec = zeros(T, window)
@@ -180,39 +204,40 @@ function lslq(A, b :: AbstractVector{T};
   csig = -one(T)
 
   rNorm = β₁
-  rNorms = [rNorm]
+  rNorms = history ? [rNorm] : T[]
   ArNorm = α * β
-  ArNorm₁ = ArNorm
-  ArNorms = [ArNorm]
-
-  verbose && @printf("%5s  %7s  %7s  %7s  %7s  %8s  %8s  %7s  %7s  %7s\n",
-                     "Aprod", "‖r‖", "‖Aᵀr‖", "β", "α", "cos", "sin", "‖A‖²", "κ(A)", "‖xL‖")
-  verbose && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e  %7.1e  %7.1e\n",
-                     1, rNorm, ArNorm, β, α, c, s, Anorm², Acond, xlqNorm)
+  ArNorms = history ? [ArNorm] : T[]
 
   iter = 0
   itmax == 0 && (itmax = m + n)
 
-  status = "unknown"
-  solved = ArNorm ≤ atol + rtol * ArNorm₁
-  tired  = iter ≥ itmax
+  (verbose > 0) && @printf("%5s  %7s  %7s  %7s  %7s  %8s  %8s  %7s  %7s  %7s\n", "Aprod", "‖r‖", "‖Aᵀr‖", "β", "α", "cos", "sin", "‖A‖²", "κ(A)", "‖xL‖")
+  display(iter, verbose) && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e  %7.1e  %7.1e\n", 1, rNorm, ArNorm, β, α, c, s, Anorm², Acond, xlqNorm)
 
-  while ! (solved || tired)
+  status = "unknown"
+  solved = solved_mach = solved_lim = (rNorm ≤ atol)
+  tired  = iter ≥ itmax
+  ill_cond = ill_cond_mach = ill_cond_lim = false
+  zero_resid = zero_resid_mach = zero_resid_lim = false
+  fwd_err_lbnd = false
+  fwd_err_ubnd = false
+
+  while ! (solved || tired || ill_cond)
 
     # Generate next Golub-Kahan vectors.
     # 1. βₖ₊₁Muₖ₊₁ = Avₖ - αₖMuₖ
-    Av = A * v
+    mul!(Av, A, v)
     @kaxpby!(m, one(T), Av, -α, Mu)
-    u = M * Mu
+    MisI || mul!(u, M, Mu)
     β = sqrt(@kdot(m, u, Mu))
     if β ≠ 0
       @kscal!(m, one(T)/β, u)
       MisI || @kscal!(m, one(T)/β, Mu)
 
       # 2. αₖ₊₁Nvₖ₊₁ = Aᵀuₖ₊₁ - βₖ₊₁Nvₖ
-      Aᵀu = Aᵀ * u
+      mul!(Aᵀu, Aᵀ, u)
       @kaxpby!(n, one(T), Aᵀu, -β, Nv)
-      v = N * Nv
+      NisI || mul!(v, N, Nv)
       α = sqrt(@kdot(n, v, Nv))
       if α ≠ 0
         @kscal!(n, one(T)/α, v)
@@ -276,17 +301,17 @@ function lslq(A, b :: AbstractVector{T};
 
     # residual norm estimate
     rNorm = sqrt((ss * cp - ζ * η)^2 + (ss * sp)^2)
-    push!(rNorms, rNorm)
+    history && push!(rNorms, rNorm)
 
     ArNorm = sqrt((γ * ϵ * ζ)^2 + (δ * η * ζold)^2)
-    push!(ArNorms, ArNorm)
+    history && push!(ArNorms, ArNorm)
 
     # Compute ‖x_cg‖₂
     xcgNorm² = xlqNorm² + ζ̄ * ζ̄
 
     if σ > 0 && iter > 0
       err_ubnd_cg = sqrt(ζ̃ * ζ̃ - ζ̄  * ζ̄ )
-      push!(err_ubnds_cg, err_ubnd_cg)
+      history && push!(err_ubnds_cg, err_ubnd_cg)
       fwd_err_ubnd = err_ubnd_cg ≤ utol * sqrt(xcgNorm²)
     end
 
@@ -294,10 +319,9 @@ function lslq(A, b :: AbstractVector{T};
     test2 = ArNorm / (Anorm * rNorm)
     test3 = 1 / Acond
     t1    = test1 / (one(T) + Anorm * xlqNorm / β₁)
-    # rtol  = btol + atol * Anorm * xlqNorm / β₁
+    rtol  = btol + atol * Anorm * xlqNorm / β₁
 
-    verbose && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e  %7.1e  %7.1e\n",
-                       1 + 2 * iter, rNorm, ArNorm, β, α, c, s, Anorm, Acond, xlqNorm)
+    display(iter, verbose) && @printf("%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %8.1e  %7.1e  %7.1e  %7.1e\n", 1 + 2 * iter, rNorm, ArNorm, β, α, c, s, Anorm, Acond, xlqNorm)
 
     # update LSLQ point for next iteration
     @kaxpy!(n, c * ζ, w̄, x_lq)
@@ -313,7 +337,7 @@ function lslq(A, b :: AbstractVector{T};
     err_vec[mod(iter, window) + 1] = ζ
     if iter ≥ window
       err_lbnd = norm(err_vec)
-      push!(err_lbnds, err_lbnd)
+      history && push!(err_lbnds, err_lbnd)
       fwd_err_lbnd = err_lbnd ≤ etol * xlqNorm
     end
 
@@ -323,22 +347,40 @@ function lslq(A, b :: AbstractVector{T};
       ϵ̃ = -ω * c
       τ̃ = -τ * δ / ω
       ζ̃ = (τ̃ - ζ * η̃) / ϵ̃
-      push!(err_ubnds_lq, abs(ζ̃ ))
+      history && push!(err_ubnds_lq, abs(ζ̃ ))
     end
+
+    # Stopping conditions that do not depend on user input.
+    # This is to guard against tolerances that are unreasonably small.
+    ill_cond_mach = (one(T) + test3 ≤ one(T))
+    solved_mach = (one(T) + test2 ≤ one(T))
+    zero_resid_mach = (one(T) + t1 ≤ one(T))
 
     # Stopping conditions based on user-provided tolerances.
     tired  = iter ≥ itmax
-    solved = ArNorm ≤ atol + rtol * ArNorm₁
+    ill_cond_lim = (test3 ≤ ctol)
+    solved_lim = (test2 ≤ atol)
+    zero_resid_lim = (test1 ≤ rtol)
+
+    ill_cond = ill_cond_mach | ill_cond_lim
+    solved = solved_mach | solved_lim | zero_resid_mach | zero_resid_lim | fwd_err_lbnd | fwd_err_ubnd
+
     iter = iter + 1
   end
+  (verbose > 0) && @printf("\n")
 
   # compute LSQR point
   @kaxpby!(n, one(T), x_lq, ζ̄ , w̄)
   x_cg = w̄
 
-  tired  && (status = "maximum number of iterations exceeded")
-  solved && (status = "found approximate minimum least-squares solution")
+  tired         && (status = "maximum number of iterations exceeded")
+  ill_cond_mach && (status = "condition number seems too large for this machine")
+  ill_cond_lim  && (status = "condition number exceeds tolerance")
+  solved        && (status = "found approximate minimum least-squares solution")
+  zero_resid    && (status = "found approximate zero-residual solution")
+  fwd_err_lbnd  && (status = "forward error lower bound small enough")
+  fwd_err_ubnd  && (status = "forward error upper bound small enough")
 
-  stats = SimpleStats(solved, false, rNorms, ArNorms, status)
-  return (x_lq, stats)
+  stats = SimpleStats(solved, !zero_resid, rNorms, ArNorms, status)
+  return (x_lq, x_cg, err_lbnds, err_ubnds_lq, err_ubnds_cg, stats)
 end

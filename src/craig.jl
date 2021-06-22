@@ -1,8 +1,43 @@
-export craig
+# An implementation of the Golub-Kahan version of Craig's method
+# for the solution of the consistent (under/over-determined or square)
+# linear system
+#
+#  Ax = b.
+#
+# The method seeks to solve the minimum-norm problem
+#
+#  min ‖x‖  s.t.  Ax = b,
+#
+# and is equivalent to applying the conjugate gradient method
+# to the linear system
+#
+#  AAᵀy = b.
+#
+# This method, sometimes known under the name CRAIG, is the
+# Golub-Kahan implementation of CGNE, and is described in
+#
+# C. C. Paige and M. A. Saunders, LSQR: An Algorithm for Sparse
+# Linear Equations and Sparse Least Squares, ACM Transactions on
+# Mathematical Software, 8(1), pp. 43--71, 1982.
+#
+# and
+#
+# M. A. Saunders, Solutions of Sparse Rectangular Systems Using LSQR and CRAIG,
+# BIT Numerical Mathematics, 35(4), pp. 588--604, 1995.
+#
+# Dominique Orban, <dominique.orban@gerad.ca>
+# Montréal, QC, April 2015.
+#
+# This implementation is strongly inspired from Mike Saunders's.
+
+export craig, craig!
 
 
 """
-    (x, y, stats) = craig(A, b; M, N, sqd, λ, atol, rtol, itmax, verbose)
+    (x, y, stats) = craig(A, b::AbstractVector{T};
+                          M=I, N=I, sqd::Bool=false, λ::T=zero(T), atol::T=√eps(T),
+                          btol::T=√eps(T), rtol::T=√eps(T), conlim::T=1/√eps(T), itmax::Int=0,
+                          verbose::Int=0, transfer_to_lsqr::Bool=false, history::Bool=false) where T <: AbstractFloat
 
 Find the least-norm solution of the consistent linear system
 
@@ -35,39 +70,55 @@ If `sqd = false`, CRAIG solves the symmetric and indefinite system
 In this case, M⁻¹ can still be specified and indicates the weighted norm in which residuals are measured.
 
 In this implementation, both the x and y-parts of the solution are returned.
+
+#### References
+
+* C. C. Paige and M. A. Saunders, *LSQR: An Algorithm for Sparse Linear Equations and Sparse Least Squares*, ACM Transactions on Mathematical Software, 8(1), pp. 43--71, 1982.
+* M. A. Saunders, *Solutions of Sparse Rectangular Systems Using LSQR and CRAIG*, BIT Numerical Mathematics, 35(4), pp. 588--604, 1995.
 """
-function craig(A, b :: AbstractVector{T};
-               M=I, N=I, sqd :: Bool=false, λ :: T=zero(T),
-               atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0,
-               verbose :: Bool=false) where T <: AbstractFloat
+function craig(A, b :: AbstractVector{T}; kwargs...) where T <: AbstractFloat
+  solver = CraigSolver(A, b)
+  craig!(solver, A, b; kwargs...)
+end
+
+function craig!(solver :: CraigSolver{T,S}, A, b :: AbstractVector{T};
+                M=I, N=I, sqd :: Bool=false, λ :: T=zero(T), atol :: T=√eps(T),
+                btol :: T=√eps(T), rtol :: T=√eps(T), conlim :: T=1/√eps(T), itmax :: Int=0,
+                verbose :: Int=0, transfer_to_lsqr :: Bool=false, history :: Bool=false) where {T <: AbstractFloat, S <: DenseVector{T}}
 
   m, n = size(A)
-  size(b, 1) == m || error("Inconsistent problem size")
-  verbose && @printf("CRAIG: system of %d equations in %d variables\n", m, n)
+  length(b) == m || error("Inconsistent problem size")
+  (verbose > 0) && @printf("CRAIG: system of %d equations in %d variables\n", m, n)
 
-  # Tests (M == I)ₘ and (N == I)ₙ
+  # Tests M == Iₘ and N == Iₙ
   MisI = (M == I)
   NisI = (N == I)
 
   # Check type consistency
   eltype(A) == T || error("eltype(A) ≠ $T")
+  ktypeof(b) == S || error("ktypeof(b) ≠ $S")
   MisI || (eltype(M) == T) || error("eltype(M) ≠ $T")
   NisI || (eltype(N) == T) || error("eltype(N) ≠ $T")
 
   # Compute the adjoint of A
   Aᵀ = A'
 
-  # Determine the storage type of b
-  S = typeof(b)
-
-  x = kzeros(S, n)
-  y = kzeros(S, m)
-
   # When solving a SQD system, set regularization parameter λ = 1.
   sqd && (λ = one(T))
 
-  Mu = copy(b)
-  u = M * Mu
+  # Set up workspace.
+  allocate_if(!MisI, solver, :u , S, m)
+  allocate_if(!NisI, solver, :v , S, n)
+  allocate_if(λ > 0, solver, :w2, S, n)
+  x, Nv, Aᵀu, y, w, Mu, Av, w2 = solver.x, solver.Nv, solver.Aᵀu, solver.y, solver.w, solver.Mu, solver.Av, solver.w2
+  u = MisI ? Mu : solver.u
+  v = NisI ? Nv : solver.v
+
+  x .= zero(T)
+  y .= zero(T)
+
+  Mu .= b
+  MisI || mul!(u, M, Mu)
   β₁ = sqrt(@kdot(m, u, Mu))
   β₁ == 0 && return x, y, SimpleStats(true, false, [zero(T)], T[], "x = 0 is a zero-residual solution")
   β₁² = β₁^2
@@ -82,10 +133,10 @@ function craig(A, b :: AbstractVector{T};
   @kscal!(m, one(T)/β₁, u)
   MisI || @kscal!(m, one(T)/β₁, Mu)
 
-  Nv = kzeros(S, n)
-  w = kzeros(S, m)  # Used to update y.
+  Nv .= zero(T)
+  w .= zero(T)  # Used to update y.
 
-  λ > 0 && (w2 = kzeros(S, n))
+  λ > 0 && (w2 .= zero(T))
 
   Anorm² = zero(T) # Estimate of ‖A‖²_F.
   Anorm  = zero(T)
@@ -98,24 +149,34 @@ function craig(A, b :: AbstractVector{T};
   itmax == 0 && (itmax = m + n)
 
   rNorm  = β₁
-  rNorms = [rNorm;]
+  rNorms = history ? [rNorm] : T[]
   ɛ_c = atol + rtol * rNorm   # Stopping tolerance for consistent systems.
   ɛ_i = atol                  # Stopping tolerance for inconsistent systems.
-  verbose && @printf("%5s  %8s  %8s  %8s  %8s  %8s  %7s\n", "Aprod", "‖r‖", "‖x‖", "‖A‖", "κ(A)", "α", "β")
-  verbose && @printf("%5d  %8.2e  %8.2e  %8.2e  %8.2e\n", 1, rNorm, xNorm, Anorm, Acond)
+  ctol = conlim > 0 ? 1/conlim : zero(T)  # Stopping tolerance for ill-conditioned operators.
+  (verbose > 0) && @printf("%5s  %8s  %8s  %8s  %8s  %8s  %7s\n", "Aprod", "‖r‖", "‖x‖", "‖A‖", "κ(A)", "α", "β")
+  display(iter, verbose) && @printf("%5d  %8.2e  %8.2e  %8.2e  %8.2e\n", 1, rNorm, xNorm, Anorm, Acond)
+
+  bkwerr = one(T)  # initial value of the backward error ‖r‖ / √(‖b‖² + ‖A‖² ‖x‖²)
 
   status = "unknown"
 
-  solved = rNorm ≤ ɛ_c
+  solved_lim = bkwerr ≤ btol
+  solved_mach = one(T) + bkwerr ≤ one(T)
+  solved_resid_tol = rNorm ≤ ɛ_c
+  solved_resid_lim = rNorm ≤ btol + atol * Anorm * xNorm / β₁
+  solved = solved_mach | solved_lim | solved_resid_tol | solved_resid_lim
+
+  ill_cond = ill_cond_mach = ill_cond_lim = false
+
   inconsistent = false
   tired = iter ≥ itmax
 
-  while ! (solved || inconsistent || tired)
+  while ! (solved || inconsistent || ill_cond || tired)
     # Generate the next Golub-Kahan vectors
     # 1. αₖ₊₁Nvₖ₊₁ = Aᵀuₖ₊₁ - βₖ₊₁Nvₖ
-    Aᵀu = Aᵀ * u
+    mul!(Aᵀu, Aᵀ, u)
     @kaxpby!(n, one(T), Aᵀu, -β, Nv)
-    v = N * Nv
+    NisI || mul!(v, N, Nv)
     α = sqrt(@kdot(n, v, Nv))
     if α == 0
       inconsistent = true
@@ -156,9 +217,9 @@ function craig(A, b :: AbstractVector{T};
     Dnorm² += @knrm2(m, w)
 
     # 2. βₖ₊₁Muₖ₊₁ = Avₖ - αₖMuₖ
-    Av = A * v
+    mul!(Av, A, v)
     @kaxpby!(m, one(T), Av, -α, Mu)
-    u = M * Mu
+    MisI || mul!(u, M, Mu)
     β = sqrt(@kdot(m, u, Mu))
     if β ≠ 0
       @kscal!(m, one(T)/β, u)
@@ -189,20 +250,41 @@ function craig(A, b :: AbstractVector{T};
     xNorm = sqrt(xNorm²)
     rNorm = β * abs(ξ)           # r = - β * ξ * u
     λ > 0 && (rNorm *= abs(c₁))  # r = -c₁ * β * ξ * u when λ > 0.
-    push!(rNorms, rNorm)
+    history && push!(rNorms, rNorm)
     iter = iter + 1
+
+    bkwerr = rNorm / sqrt(β₁² + Anorm² * xNorm²)
 
     ρ_prev = ρ   # Only differs from α if λ > 0.
 
-    verbose && @printf("%5d  %8.2e  %8.2e  %8.2e  %8.2e  %8.1e  %7.1e\n", 1 + 2 * iter, rNorm, xNorm, Anorm, Acond, α, β)
+    display(iter, verbose) && @printf("%5d  %8.2e  %8.2e  %8.2e  %8.2e  %8.1e  %7.1e\n", 1 + 2 * iter, rNorm, xNorm, Anorm, Acond, α, β)
 
-    solved = rNorm ≤ ɛ_c
+    solved_lim = bkwerr ≤ btol
+    solved_mach = one(T) + bkwerr ≤ one(T)
+    solved_resid_tol = rNorm ≤ ɛ_c
+    solved_resid_lim = rNorm ≤ btol + atol * Anorm * xNorm / β₁
+    solved = solved_mach | solved_lim | solved_resid_tol | solved_resid_lim
+
+    ill_cond_mach = one(T) + one(T) / Acond ≤ one(T)
+    ill_cond_lim = 1 / Acond ≤ ctol
+    ill_cond = ill_cond_mach | ill_cond_lim
+
     inconsistent = false
     tired = iter ≥ itmax
+  end
+  (verbose > 0) && @printf("\n")
+
+  # transfer to LSQR point if requested
+  if λ > 0 && transfer_to_lsqr
+    ξ *= -θ / δ
+    @kaxpy!(n, ξ, w2, x)
+    # TODO: update y
   end
 
   tired         && (status = "maximum number of iterations exceeded")
   solved        && (status = "solution good enough for the tolerances given")
+  ill_cond_mach && (status = "condition number seems too large for this machine")
+  ill_cond_lim  && (status = "condition number exceeds tolerance")
   inconsistent  && (status = "system may be inconsistent")
 
   stats = SimpleStats(solved, inconsistent, rNorms, T[], status)
