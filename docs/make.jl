@@ -21,7 +21,8 @@ makedocs(
            "GPU" => "gpu.md",
            "Factorization-free operators" => "factorization-free.md",
            "Performance tips" => "tips.md",
-           "Tutorial" => "examples.md",
+           "Examples" => "examples.md",
+           "Tutorials" => "tutorials.md",
            "Reference" => "reference.md"
           ]
 )
