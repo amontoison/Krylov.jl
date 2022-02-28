@@ -375,6 +375,7 @@ mutable struct DqgmresSolver{T,S} <: KrylovSolver{T,S}
   stats :: SimpleStats{T}
 
   function DqgmresSolver(n, m, memory, S)
+    memory = min(n, memory)
     T  = eltype(S)
     Δx = S(undef, 0)
     x  = S(undef, n)
@@ -391,7 +392,7 @@ mutable struct DqgmresSolver{T,S} <: KrylovSolver{T,S}
     return solver
   end
 
-  function DqgmresSolver(A, b, memory)
+  function DqgmresSolver(A, b, memory=20)
     n, m = size(A)
     S = ktypeof(b)
     DqgmresSolver(n, m, memory, S)
@@ -421,6 +422,7 @@ mutable struct DiomSolver{T,S} <: KrylovSolver{T,S}
   stats :: SimpleStats{T}
 
   function DiomSolver(n, m, memory, S)
+    memory = min(n, memory)
     T  = eltype(S)
     Δx = S(undef, 0)
     x  = S(undef, n)
@@ -436,7 +438,7 @@ mutable struct DiomSolver{T,S} <: KrylovSolver{T,S}
     return solver
   end
 
-  function DiomSolver(A, b, memory)
+  function DiomSolver(A, b, memory=20)
     n, m = size(A)
     S = ktypeof(b)
     DiomSolver(n, m, memory, S)
@@ -1399,6 +1401,7 @@ mutable struct GmresSolver{T,S} <: KrylovSolver{T,S}
   stats :: SimpleStats{T}
 
   function GmresSolver(n, m, memory, S)
+    memory = min(n, memory)
     T  = eltype(S)
     Δx = S(undef, 0)
     x  = S(undef, n)
@@ -1415,7 +1418,7 @@ mutable struct GmresSolver{T,S} <: KrylovSolver{T,S}
     return solver
   end
 
-  function GmresSolver(A, b, memory)
+  function GmresSolver(A, b, memory=20)
     n, m = size(A)
     S = ktypeof(b)
     GmresSolver(n, m, memory, S)
@@ -1445,6 +1448,7 @@ mutable struct FomSolver{T,S} <: KrylovSolver{T,S}
   stats :: SimpleStats{T}
 
   function FomSolver(n, m, memory, S)
+    memory = min(n, memory)
     T  = eltype(S)
     Δx = S(undef, 0)
     x  = S(undef, n)
@@ -1460,7 +1464,7 @@ mutable struct FomSolver{T,S} <: KrylovSolver{T,S}
     return solver
   end
 
-  function FomSolver(A, b, memory)
+  function FomSolver(A, b, memory=20)
     n, m = size(A)
     S = ktypeof(b)
     FomSolver(n, m, memory, S)
@@ -1497,6 +1501,7 @@ mutable struct GpmrSolver{T,S} <: KrylovSolver{T,S}
   stats :: SimpleStats{T}
 
   function GpmrSolver(n, m, memory, S)
+    memory = min(n+m, memory)
     T  = eltype(S)
     wA = S(undef, 0)
     wB = S(undef, 0)
@@ -1519,7 +1524,7 @@ mutable struct GpmrSolver{T,S} <: KrylovSolver{T,S}
     return solver
   end
 
-  function GpmrSolver(A, b, memory)
+  function GpmrSolver(A, b, memory=20)
     n, m = size(A)
     S = ktypeof(b)
     GpmrSolver(n, m, memory, S)
