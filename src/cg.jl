@@ -167,7 +167,7 @@ function cg!(solver :: CgSolver{T,FC,S}, A, b :: AbstractVector{FC};
     tired = iter ≥ itmax
     kdisplay(iter, verbose) && @printf("%5d  %7.1e", iter, rNorm)
   end
-  (verbose > 0) && @printf("\n")
+  (verbose > 0) && @printf("\n\n")
 
   solved && on_boundary && (status = "on trust-region boundary")
   solved && linesearch && (pAp ≤ 0) && (status = "nonpositive curvature detected")

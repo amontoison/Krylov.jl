@@ -5,6 +5,8 @@ include("test_utils.jl")
 include("test_aux.jl")
 include("test_stats.jl")
 
+include("test_verbose.jl")
+
 include("test_gpmr.jl")
 include("test_fom.jl")
 include("test_gmres.jl")
@@ -40,4 +42,3 @@ include("test_cr.jl")
 include("test_alloc.jl")
 include("test_mp.jl")
 include("test_solvers.jl")
-include("test_verbose.jl")
