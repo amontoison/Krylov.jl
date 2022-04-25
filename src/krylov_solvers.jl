@@ -103,13 +103,14 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct CgSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  Δx    :: S
-  x     :: S
-  r     :: S
-  p     :: S
-  Ap    :: S
-  z     :: S
-  stats :: SimpleStats{T}
+  Δx         :: S
+  x          :: S
+  r          :: S
+  p          :: S
+  Ap         :: S
+  z          :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function CgSolver(n, m, S)
     FC = eltype(S)
@@ -121,7 +122,7 @@ mutable struct CgSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     Ap = S(undef, n)
     z  = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(Δx, x, r, p, Ap, z, stats)
+    solver = new{T,FC,S}(Δx, x, r, p, Ap, z, false, stats)
     return solver
   end
 
@@ -143,13 +144,14 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct CrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  r     :: S
-  p     :: S
-  q     :: S
-  Ar    :: S
-  Mq    :: S
-  stats :: SimpleStats{T}
+  x          :: S
+  r          :: S
+  p          :: S
+  q          :: S
+  Ar         :: S
+  Mq         :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function CrSolver(n, m, S)
     FC = eltype(S)
@@ -161,7 +163,7 @@ mutable struct CrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     Ar = S(undef, n)
     Mq = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, r, p, q, Ar, Mq, stats)
+    solver = new{T,FC,S}(x, r, p, q, Ar, Mq, false, stats)
     return solver
   end
 
@@ -183,17 +185,18 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct SymmlqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  Δx      :: S
-  x       :: S
-  Mvold   :: S
-  Mv      :: S
-  Mv_next :: S
-  w̅       :: S
-  v       :: S
-  clist   :: Vector{T}
-  zlist   :: Vector{T}
-  sprod   :: Vector{T}
-  stats   :: SymmlqStats{T}
+  Δx         :: S
+  x          :: S
+  Mvold      :: S
+  Mv         :: S
+  Mv_next    :: S
+  w̅          :: S
+  v          :: S
+  clist      :: Vector{T}
+  zlist      :: Vector{T}
+  sprod      :: Vector{T}
+  warm_start :: Bool
+  stats      :: SymmlqStats{T}
 
   function SymmlqSolver(n, m, S; window :: Int=5)
     FC      = eltype(S)
@@ -209,7 +212,7 @@ mutable struct SymmlqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     zlist   = zeros(T, window)
     sprod   = ones(T, window)
     stats = SymmlqStats(0, false, T[], Union{T, Missing}[], T[], Union{T, Missing}[], T(NaN), T(NaN), "unknown")
-    solver = new{T,FC,S}(Δx, x, Mvold, Mv, Mv_next, w̅, v, clist, zlist, sprod, stats)
+    solver = new{T,FC,S}(Δx, x, Mvold, Mv, Mv_next, w̅, v, clist, zlist, sprod, false, stats)
     return solver
   end
 
@@ -231,13 +234,14 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct CgLanczosSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x       :: S
-  Mv      :: S
-  Mv_prev :: S
-  p       :: S
-  Mv_next :: S
-  v       :: S
-  stats   :: LanczosStats{T}
+  x          :: S
+  Mv         :: S
+  Mv_prev    :: S
+  p          :: S
+  Mv_next    :: S
+  v          :: S
+  warm_start :: Bool
+  stats      :: LanczosStats{T}
 
   function CgLanczosSolver(n, m, S)
     FC      = eltype(S)
@@ -249,7 +253,7 @@ mutable struct CgLanczosSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     Mv_next = S(undef, n)
     v       = S(undef, 0)
     stats = LanczosStats(0, false, T[], false, T(NaN), T(NaN), "unknown")
-    solver = new{T,FC,S}(x, Mv, Mv_prev, p, Mv_next, v, stats)
+    solver = new{T,FC,S}(x, Mv, Mv_prev, p, Mv_next, v, false, stats)
     return solver
   end
 
@@ -284,6 +288,7 @@ mutable struct CgLanczosShiftSolver{T,FC,S} <: KrylovSolver{T,FC,S}
   rNorms     :: Vector{T}
   converged  :: BitVector
   not_cv     :: BitVector
+  warm_start :: Bool
   stats      :: LanczosShiftStats{T}
 
   function CgLanczosShiftSolver(n, m, nshifts, S)
@@ -304,7 +309,7 @@ mutable struct CgLanczosShiftSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     converged  = BitVector(undef, nshifts)
     not_cv     = BitVector(undef, nshifts)
     stats = LanczosShiftStats(0, false, [T[] for i = 1 : nshifts], indefinite, T(NaN), T(NaN), "unknown")
-    solver = new{T,FC,S}(Mv, Mv_prev, Mv_next, v, x, p, σ, δhat, ω, γ, rNorms, converged, not_cv, stats)
+    solver = new{T,FC,S}(Mv, Mv_prev, Mv_next, v, x, p, σ, δhat, ω, γ, rNorms, converged, not_cv, false, stats)
     return solver
   end
 
@@ -326,15 +331,16 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct MinresQlpSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  Δx      :: S
-  wₖ₋₁    :: S
-  wₖ      :: S
-  M⁻¹vₖ₋₁ :: S
-  M⁻¹vₖ   :: S
-  x       :: S
-  p       :: S
-  vₖ      :: S
-  stats   :: SimpleStats{T}
+  Δx         :: S
+  wₖ₋₁       :: S
+  wₖ         :: S
+  M⁻¹vₖ₋₁    :: S
+  M⁻¹vₖ      :: S
+  x          :: S
+  p          :: S
+  vₖ         :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function MinresQlpSolver(n, m, S)
     FC      = eltype(S)
@@ -348,7 +354,7 @@ mutable struct MinresQlpSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     p       = S(undef, n)
     vₖ      = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(Δx, wₖ₋₁, wₖ, M⁻¹vₖ₋₁, M⁻¹vₖ, x, p, vₖ, stats)
+    solver = new{T,FC,S}(Δx, wₖ₋₁, wₖ, M⁻¹vₖ₋₁, M⁻¹vₖ, x, p, vₖ, false, stats)
     return solver
   end
 
@@ -371,17 +377,18 @@ may be used in order to create these vectors.
 `memory` is set to `n` if the value given is larger than `n`.
 """
 mutable struct DqgmresSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  Δx    :: S
-  x     :: S
-  t     :: S
-  z     :: S
-  w     :: S
-  P     :: Vector{S}
-  V     :: Vector{S}
-  c     :: Vector{T}
-  s     :: Vector{FC}
-  H     :: Vector{FC}
-  stats :: SimpleStats{T}
+  Δx         :: S
+  x          :: S
+  t          :: S
+  z          :: S
+  w          :: S
+  P          :: Vector{S}
+  V          :: Vector{S}
+  c          :: Vector{T}
+  s          :: Vector{FC}
+  H          :: Vector{FC}
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function DqgmresSolver(n, m, memory, S)
     memory = min(n, memory)
@@ -398,7 +405,7 @@ mutable struct DqgmresSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     s  = Vector{FC}(undef, memory)
     H  = Vector{FC}(undef, memory+2)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(Δx, x, t, z, w, P, V, c, s, H, stats)
+    solver = new{T,FC,S}(Δx, x, t, z, w, P, V, c, s, H, false, stats)
     return solver
   end
 
@@ -421,16 +428,17 @@ may be used in order to create these vectors.
 `memory` is set to `n` if the value given is larger than `n`.
 """
 mutable struct DiomSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  Δx    :: S
-  x     :: S
-  t     :: S
-  z     :: S
-  w     :: S
-  P     :: Vector{S}
-  V     :: Vector{S}
-  L     :: Vector{FC}
-  H     :: Vector{FC}
-  stats :: SimpleStats{T}
+  Δx         :: S
+  x          :: S
+  t          :: S
+  z          :: S
+  w          :: S
+  P          :: Vector{S}
+  V          :: Vector{S}
+  L          :: Vector{FC}
+  H          :: Vector{FC}
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function DiomSolver(n, m, memory, S)
     memory = min(n, memory)
@@ -446,7 +454,7 @@ mutable struct DiomSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     L  = Vector{FC}(undef, memory)
     H  = Vector{FC}(undef, memory+2)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(Δx, x, t, z, w, P, V, L, H, stats)
+    solver = new{T,FC,S}(Δx, x, t, z, w, P, V, L, H, false, stats)
     return solver
   end
 
@@ -468,15 +476,16 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct UsymlqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  uₖ₋₁  :: S
-  uₖ    :: S
-  p     :: S
-  x     :: S
-  d̅     :: S
-  vₖ₋₁  :: S
-  vₖ    :: S
-  q     :: S
-  stats :: SimpleStats{T}
+  uₖ₋₁       :: S
+  uₖ         :: S
+  p          :: S
+  x          :: S
+  d̅          :: S
+  vₖ₋₁       :: S
+  vₖ         :: S
+  q          :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function UsymlqSolver(n, m, S)
     FC   = eltype(S)
@@ -490,7 +499,7 @@ mutable struct UsymlqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     vₖ   = S(undef, n)
     q    = S(undef, n)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(uₖ₋₁, uₖ, p, x, d̅, vₖ₋₁, vₖ, q, stats)
+    solver = new{T,FC,S}(uₖ₋₁, uₖ, p, x, d̅, vₖ₋₁, vₖ, q, false, stats)
     return solver
   end
 
@@ -512,16 +521,17 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct UsymqrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  vₖ₋₁  :: S
-  vₖ    :: S
-  q     :: S
-  x     :: S
-  wₖ₋₂  :: S
-  wₖ₋₁  :: S
-  uₖ₋₁  :: S
-  uₖ    :: S
-  p     :: S
-  stats :: SimpleStats{T}
+  vₖ₋₁       :: S
+  vₖ         :: S
+  q          :: S
+  x          :: S
+  wₖ₋₂       :: S
+  wₖ₋₁       :: S
+  uₖ₋₁       :: S
+  uₖ         :: S
+  p          :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function UsymqrSolver(n, m, S)
     FC   = eltype(S)
@@ -536,7 +546,7 @@ mutable struct UsymqrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     uₖ   = S(undef, m)
     p    = S(undef, m)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(vₖ₋₁, vₖ, q, x, wₖ₋₂, wₖ₋₁, uₖ₋₁, uₖ, p, stats)
+    solver = new{T,FC,S}(vₖ₋₁, vₖ, q, x, wₖ₋₂, wₖ₋₁, uₖ₋₁, uₖ, p, false, stats)
     return solver
   end
 
@@ -558,23 +568,24 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct TricgSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  y       :: S
-  N⁻¹uₖ₋₁ :: S
-  N⁻¹uₖ   :: S
-  p       :: S
-  gy₂ₖ₋₁  :: S
-  gy₂ₖ    :: S
-  x       :: S
-  M⁻¹vₖ₋₁ :: S
-  M⁻¹vₖ   :: S
-  q       :: S
-  gx₂ₖ₋₁  :: S
-  gx₂ₖ    :: S
-  Δx      :: S
-  Δy      :: S
-  uₖ      :: S
-  vₖ      :: S
-  stats   :: SimpleStats{T}
+  y          :: S
+  N⁻¹uₖ₋₁    :: S
+  N⁻¹uₖ      :: S
+  p          :: S
+  gy₂ₖ₋₁     :: S
+  gy₂ₖ       :: S
+  x          :: S
+  M⁻¹vₖ₋₁    :: S
+  M⁻¹vₖ      :: S
+  q          :: S
+  gx₂ₖ₋₁     :: S
+  gx₂ₖ       :: S
+  Δx         :: S
+  Δy         :: S
+  uₖ         :: S
+  vₖ         :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function TricgSolver(n, m, S)
     FC      = eltype(S)
@@ -596,7 +607,7 @@ mutable struct TricgSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     uₖ      = S(undef, 0)
     vₖ      = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(y, N⁻¹uₖ₋₁, N⁻¹uₖ, p, gy₂ₖ₋₁, gy₂ₖ, x, M⁻¹vₖ₋₁, M⁻¹vₖ, q, gx₂ₖ₋₁, gx₂ₖ, Δx, Δy, uₖ, vₖ, stats)
+    solver = new{T,FC,S}(y, N⁻¹uₖ₋₁, N⁻¹uₖ, p, gy₂ₖ₋₁, gy₂ₖ, x, M⁻¹vₖ₋₁, M⁻¹vₖ, q, gx₂ₖ₋₁, gx₂ₖ, Δx, Δy, uₖ, vₖ, false, stats)
     return solver
   end
 
@@ -618,27 +629,28 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct TrimrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  y       :: S
-  N⁻¹uₖ₋₁ :: S
-  N⁻¹uₖ   :: S
-  p       :: S
-  gy₂ₖ₋₃  :: S
-  gy₂ₖ₋₂  :: S
-  gy₂ₖ₋₁  :: S
-  gy₂ₖ    :: S
-  x       :: S
-  M⁻¹vₖ₋₁ :: S
-  M⁻¹vₖ   :: S
-  q       :: S
-  gx₂ₖ₋₃  :: S
-  gx₂ₖ₋₂  :: S
-  gx₂ₖ₋₁  :: S
-  gx₂ₖ    :: S
-  Δx      :: S
-  Δy      :: S
-  uₖ      :: S
-  vₖ      :: S
-  stats   :: SimpleStats{T}
+  y          :: S
+  N⁻¹uₖ₋₁    :: S
+  N⁻¹uₖ      :: S
+  p          :: S
+  gy₂ₖ₋₃     :: S
+  gy₂ₖ₋₂     :: S
+  gy₂ₖ₋₁     :: S
+  gy₂ₖ       :: S
+  x          :: S
+  M⁻¹vₖ₋₁    :: S
+  M⁻¹vₖ      :: S
+  q          :: S
+  gx₂ₖ₋₃     :: S
+  gx₂ₖ₋₂     :: S
+  gx₂ₖ₋₁     :: S
+  gx₂ₖ       :: S
+  Δx         :: S
+  Δy         :: S
+  uₖ         :: S
+  vₖ         :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function TrimrSolver(n, m, S)
     FC      = eltype(S)
@@ -664,7 +676,7 @@ mutable struct TrimrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     uₖ      = S(undef, 0)
     vₖ      = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(y, N⁻¹uₖ₋₁, N⁻¹uₖ, p, gy₂ₖ₋₃, gy₂ₖ₋₂, gy₂ₖ₋₁, gy₂ₖ, x, M⁻¹vₖ₋₁, M⁻¹vₖ, q, gx₂ₖ₋₃, gx₂ₖ₋₂, gx₂ₖ₋₁, gx₂ₖ, Δx, Δy, uₖ, vₖ, stats)
+    solver = new{T,FC,S}(y, N⁻¹uₖ₋₁, N⁻¹uₖ, p, gy₂ₖ₋₃, gy₂ₖ₋₂, gy₂ₖ₋₁, gy₂ₖ, x, M⁻¹vₖ₋₁, M⁻¹vₖ, q, gx₂ₖ₋₃, gx₂ₖ₋₂, gx₂ₖ₋₁, gx₂ₖ, Δx, Δy, uₖ, vₖ, false, stats)
     return solver
   end
 
@@ -686,18 +698,19 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct TrilqrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  uₖ₋₁  :: S
-  uₖ    :: S
-  p     :: S
-  d̅     :: S
-  x     :: S
-  vₖ₋₁  :: S
-  vₖ    :: S
-  q     :: S
-  y     :: S
-  wₖ₋₃  :: S
-  wₖ₋₂  :: S
-  stats :: AdjointStats{T}
+  uₖ₋₁       :: S
+  uₖ         :: S
+  p          :: S
+  d̅          :: S
+  x          :: S
+  vₖ₋₁       :: S
+  vₖ         :: S
+  q          :: S
+  y          :: S
+  wₖ₋₃       :: S
+  wₖ₋₂       :: S
+  warm_start :: Bool
+  stats      :: AdjointStats{T}
 
   function TrilqrSolver(n, m, S)
     FC   = eltype(S)
@@ -714,7 +727,7 @@ mutable struct TrilqrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     wₖ₋₃ = S(undef, n)
     wₖ₋₂ = S(undef, n)
     stats = AdjointStats(0, false, false, T[], T[], "unknown")
-    solver = new{T,FC,S}(uₖ₋₁, uₖ, p, d̅, x, vₖ₋₁, vₖ, q, y, wₖ₋₃, wₖ₋₂, stats)
+    solver = new{T,FC,S}(uₖ₋₁, uₖ, p, d̅, x, vₖ₋₁, vₖ, q, y, wₖ₋₃, wₖ₋₂, false, stats)
     return solver
   end
 
@@ -736,15 +749,16 @@ The outer constructorss
 may be used in order to create these vectors.
 """
 mutable struct CgsSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  r     :: S
-  u     :: S
-  p     :: S
-  q     :: S
-  ts    :: S
-  yz    :: S
-  vw    :: S
-  stats :: SimpleStats{T}
+  x          :: S
+  r          :: S
+  u          :: S
+  p          :: S
+  q          :: S
+  ts         :: S
+  yz         :: S
+  vw         :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function CgsSolver(n, m, S)
     FC = eltype(S)
@@ -758,7 +772,7 @@ mutable struct CgsSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     yz = S(undef, 0)
     vw = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, r, u, p, q, ts, yz, vw, stats)
+    solver = new{T,FC,S}(x, r, u, p, q, ts, yz, vw, false, stats)
     return solver
   end
 
@@ -780,15 +794,16 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct BicgstabSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  r     :: S
-  p     :: S
-  v     :: S
-  s     :: S
-  qd    :: S
-  yz    :: S
-  t     :: S
-  stats :: SimpleStats{T}
+  x          :: S
+  r          :: S
+  p          :: S
+  v          :: S
+  s          :: S
+  qd         :: S
+  yz         :: S
+  t          :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function BicgstabSolver(n, m, S)
     FC = eltype(S)
@@ -802,7 +817,7 @@ mutable struct BicgstabSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     yz = S(undef, 0)
     t  = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, r, p, v, s, qd, yz, t, stats)
+    solver = new{T,FC,S}(x, r, p, v, s, qd, yz, t, false, stats)
     return solver
   end
 
@@ -824,15 +839,16 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct BilqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  uₖ₋₁  :: S
-  uₖ    :: S
-  q     :: S
-  vₖ₋₁  :: S
-  vₖ    :: S
-  p     :: S
-  x     :: S
-  d̅     :: S
-  stats :: SimpleStats{T}
+  uₖ₋₁       :: S
+  uₖ         :: S
+  q          :: S
+  vₖ₋₁       :: S
+  vₖ         :: S
+  p          :: S
+  x          :: S
+  d̅          :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function BilqSolver(n, m, S)
     FC   = eltype(S)
@@ -846,7 +862,7 @@ mutable struct BilqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     x    = S(undef, n)
     d̅    = S(undef, n)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(uₖ₋₁, uₖ, q, vₖ₋₁, vₖ, p, x, d̅, stats)
+    solver = new{T,FC,S}(uₖ₋₁, uₖ, q, vₖ₋₁, vₖ, p, x, d̅, false, stats)
     return solver
   end
 
@@ -868,16 +884,17 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct QmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  uₖ₋₁  :: S
-  uₖ    :: S
-  q     :: S
-  vₖ₋₁  :: S
-  vₖ    :: S
-  p     :: S
-  x     :: S
-  wₖ₋₂  :: S
-  wₖ₋₁  :: S
-  stats :: SimpleStats{T}
+  uₖ₋₁       :: S
+  uₖ         :: S
+  q          :: S
+  vₖ₋₁       :: S
+  vₖ         :: S
+  p          :: S
+  x          :: S
+  wₖ₋₂       :: S
+  wₖ₋₁       :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function QmrSolver(n, m, S)
     FC   = eltype(S)
@@ -892,7 +909,7 @@ mutable struct QmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     wₖ₋₂ = S(undef, n)
     wₖ₋₁ = S(undef, n)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(uₖ₋₁, uₖ, q, vₖ₋₁, vₖ, p, x, wₖ₋₂, wₖ₋₁, stats)
+    solver = new{T,FC,S}(uₖ₋₁, uₖ, q, vₖ₋₁, vₖ, p, x, wₖ₋₂, wₖ₋₁, false, stats)
     return solver
   end
 
@@ -914,18 +931,19 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct BilqrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  uₖ₋₁  :: S
-  uₖ    :: S
-  q     :: S
-  vₖ₋₁  :: S
-  vₖ    :: S
-  p     :: S
-  x     :: S
-  y     :: S
-  d̅     :: S
-  wₖ₋₃  :: S
-  wₖ₋₂  :: S
-  stats :: AdjointStats{T}
+  uₖ₋₁       :: S
+  uₖ         :: S
+  q          :: S
+  vₖ₋₁       :: S
+  vₖ         :: S
+  p          :: S
+  x          :: S
+  y          :: S
+  d̅          :: S
+  wₖ₋₃       :: S
+  wₖ₋₂       :: S
+  warm_start :: Bool
+  stats      :: AdjointStats{T}
 
   function BilqrSolver(n, m, S)
     FC   = eltype(S)
@@ -942,7 +960,7 @@ mutable struct BilqrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     wₖ₋₃ = S(undef, n)
     wₖ₋₂ = S(undef, n)
     stats = AdjointStats(0, false, false, T[], T[], "unknown")
-    solver = new{T,FC,S}(uₖ₋₁, uₖ, q, vₖ₋₁, vₖ, p, x, y, d̅, wₖ₋₃, wₖ₋₂, stats)
+    solver = new{T,FC,S}(uₖ₋₁, uₖ, q, vₖ₋₁, vₖ, p, x, y, d̅, wₖ₋₃, wₖ₋₂, false, stats)
     return solver
   end
 
@@ -964,13 +982,14 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct CglsSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  p     :: S
-  s     :: S
-  r     :: S
-  q     :: S
-  Mr    :: S
-  stats :: SimpleStats{T}
+  x          :: S
+  p          :: S
+  s          :: S
+  r          :: S
+  q          :: S
+  Mr         :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function CglsSolver(n, m, S)
     FC = eltype(S)
@@ -982,7 +1001,7 @@ mutable struct CglsSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     q  = S(undef, n)
     Mr = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, p, s, r, q, Mr, stats)
+    solver = new{T,FC,S}(x, p, s, r, q, Mr, false, stats)
     return solver
   end
 
@@ -1004,15 +1023,16 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct CrlsSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  p     :: S
-  Ar    :: S
-  q     :: S
-  r     :: S
-  Ap    :: S
-  s     :: S
-  Ms    :: S
-  stats :: SimpleStats{T}
+  x          :: S
+  p          :: S
+  Ar         :: S
+  q          :: S
+  r          :: S
+  Ap         :: S
+  s          :: S
+  Ms         :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function CrlsSolver(n, m, S)
     FC = eltype(S)
@@ -1026,7 +1046,7 @@ mutable struct CrlsSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     s  = S(undef, n)
     Ms = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, p, Ar, q, r, Ap, s, Ms, stats)
+    solver = new{T,FC,S}(x, p, Ar, q, r, Ap, s, Ms, false, stats)
     return solver
   end
 
@@ -1048,14 +1068,15 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct CgneSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  p     :: S
-  Aᵀz   :: S
-  r     :: S
-  q     :: S
-  s     :: S
-  z     :: S
-  stats :: SimpleStats{T}
+  x          :: S
+  p          :: S
+  Aᵀz        :: S
+  r          :: S
+  q          :: S
+  s          :: S
+  z          :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function CgneSolver(n, m, S)
     FC  = eltype(S)
@@ -1068,7 +1089,7 @@ mutable struct CgneSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     s   = S(undef, 0)
     z   = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, p, Aᵀz, r, q, s, z, stats)
+    solver = new{T,FC,S}(x, p, Aᵀz, r, q, s, z, false, stats)
     return solver
   end
 
@@ -1090,14 +1111,15 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct CrmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  p     :: S
-  Aᵀr   :: S
-  r     :: S
-  q     :: S
-  Mq    :: S
-  s     :: S
-  stats :: SimpleStats{T}
+  x          :: S
+  p          :: S
+  Aᵀr        :: S
+  r          :: S
+  q          :: S
+  Mq         :: S
+  s          :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function CrmrSolver(n, m, S)
     FC  = eltype(S)
@@ -1110,7 +1132,7 @@ mutable struct CrmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     Mq  = S(undef, 0)
     s   = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, p, Aᵀr, r, q, Mq, s, stats)
+    solver = new{T,FC,S}(x, p, Aᵀr, r, q, Mq, s, false, stats)
     return solver
   end
 
@@ -1132,16 +1154,17 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct LslqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x       :: S
-  Nv      :: S
-  Aᵀu     :: S
-  w̄       :: S
-  Mu      :: S
-  Av      :: S
-  u       :: S
-  v       :: S
-  err_vec :: Vector{T}
-  stats   :: LSLQStats{T}
+  x          :: S
+  Nv         :: S
+  Aᵀu        :: S
+  w̄          :: S
+  Mu         :: S
+  Av         :: S
+  u          :: S
+  v          :: S
+  err_vec    :: Vector{T}
+  warm_start :: Bool
+  stats      :: LSLQStats{T}
 
   function LslqSolver(n, m, S; window :: Int=5)
     FC  = eltype(S)
@@ -1156,7 +1179,7 @@ mutable struct LslqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     v   = S(undef, 0)
     err_vec = zeros(T, window)
     stats = LSLQStats(0, false, false, T[], T[], T[], false, T[], T[], "unknown")
-    solver = new{T,FC,S}(x, Nv, Aᵀu, w̄, Mu, Av, u, v, err_vec, stats)
+    solver = new{T,FC,S}(x, Nv, Aᵀu, w̄, Mu, Av, u, v, err_vec, false, stats)
     return solver
   end
 
@@ -1178,16 +1201,17 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct LsqrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x       :: S
-  Nv      :: S
-  Aᵀu     :: S
-  w       :: S
-  Mu      :: S
-  Av      :: S
-  u       :: S
-  v       :: S
-  err_vec :: Vector{T}
-  stats   :: SimpleStats{T}
+  x          :: S
+  Nv         :: S
+  Aᵀu        :: S
+  w          :: S
+  Mu         :: S
+  Av         :: S
+  u          :: S
+  v          :: S
+  err_vec    :: Vector{T}
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function LsqrSolver(n, m, S; window :: Int=5)
     FC  = eltype(S)
@@ -1202,7 +1226,7 @@ mutable struct LsqrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     v   = S(undef, 0)
     err_vec = zeros(T, window)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, Nv, Aᵀu, w, Mu, Av, u, v, err_vec, stats)
+    solver = new{T,FC,S}(x, Nv, Aᵀu, w, Mu, Av, u, v, err_vec, false, stats)
     return solver
   end
 
@@ -1224,17 +1248,18 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct LsmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x       :: S
-  Nv      :: S
-  Aᵀu     :: S
-  h       :: S
-  hbar    :: S
-  Mu      :: S
-  Av      :: S
-  u       :: S
-  v       :: S
-  err_vec :: Vector{T}
-  stats   :: SimpleStats{T}
+  x          :: S
+  Nv         :: S
+  Aᵀu        :: S
+  h          :: S
+  hbar       :: S
+  Mu         :: S
+  Av         :: S
+  u          :: S
+  v          :: S
+  err_vec    :: Vector{T}
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function LsmrSolver(n, m, S; window :: Int=5)
     FC   = eltype(S)
@@ -1250,7 +1275,7 @@ mutable struct LsmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     v    = S(undef, 0)
     err_vec = zeros(T, window)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, Nv, Aᵀu, h, hbar, Mu, Av, u, v, err_vec, stats)
+    solver = new{T,FC,S}(x, Nv, Aᵀu, h, hbar, Mu, Av, u, v, err_vec, false, stats)
     return solver
   end
 
@@ -1272,17 +1297,18 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct LnlqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  Nv    :: S
-  Aᵀu   :: S
-  y     :: S
-  w̄     :: S
-  Mu    :: S
-  Av    :: S
-  u     :: S
-  v     :: S
-  q     :: S
-  stats :: LNLQStats{T}
+  x          :: S
+  Nv         :: S
+  Aᵀu        :: S
+  y          :: S
+  w̄          :: S
+  Mu         :: S
+  Av         :: S
+  u          :: S
+  v          :: S
+  q          :: S
+  warm_start :: Bool
+  stats      :: LNLQStats{T}
 
   function LnlqSolver(n, m, S)
     FC  = eltype(S)
@@ -1298,7 +1324,7 @@ mutable struct LnlqSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     v   = S(undef, 0)
     q   = S(undef, 0)
     stats = LNLQStats(0, false, T[], false, T[], T[], "unknown")
-    solver = new{T,FC,S}(x, Nv, Aᵀu, y, w̄, Mu, Av, u, v, q, stats)
+    solver = new{T,FC,S}(x, Nv, Aᵀu, y, w̄, Mu, Av, u, v, q, false, stats)
     return solver
   end
 
@@ -1320,17 +1346,18 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct CraigSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  Nv    :: S
-  Aᵀu   :: S
-  y     :: S
-  w     :: S
-  Mu    :: S
-  Av    :: S
-  u     :: S
-  v     :: S
-  w2    :: S
-  stats :: SimpleStats{T}
+  x          :: S
+  Nv         :: S
+  Aᵀu        :: S
+  y          :: S
+  w          :: S
+  Mu         :: S
+  Av         :: S
+  u          :: S
+  v          :: S
+  w2         :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function CraigSolver(n, m, S)
     FC  = eltype(S)
@@ -1346,7 +1373,7 @@ mutable struct CraigSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     v   = S(undef, 0)
     w2  = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, Nv, Aᵀu, y, w, Mu, Av, u, v, w2, stats)
+    solver = new{T,FC,S}(x, Nv, Aᵀu, y, w, Mu, Av, u, v, w2, false, stats)
     return solver
   end
 
@@ -1368,19 +1395,20 @@ The outer constructors
 may be used in order to create these vectors.
 """
 mutable struct CraigmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  x     :: S
-  Nv    :: S
-  Aᵀu   :: S
-  d     :: S
-  y     :: S
-  Mu    :: S
-  w     :: S
-  wbar  :: S
-  Av    :: S
-  u     :: S
-  v     :: S
-  q     :: S
-  stats :: SimpleStats{T}
+  x          :: S
+  Nv         :: S
+  Aᵀu        :: S
+  d          :: S
+  y          :: S
+  Mu         :: S
+  w          :: S
+  wbar       :: S
+  Av         :: S
+  u          :: S
+  v          :: S
+  q          :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function CraigmrSolver(n, m, S)
     FC   = eltype(S)
@@ -1398,7 +1426,7 @@ mutable struct CraigmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     v    = S(undef, 0)
     q    = S(undef, 0)
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(x, Nv, Aᵀu, d, y, Mu, w, wbar, Av, u, v, q, stats)
+    solver = new{T,FC,S}(x, Nv, Aᵀu, d, y, Mu, w, wbar, Av, u, v, q, false, stats)
     return solver
   end
 
@@ -1472,16 +1500,17 @@ may be used in order to create these vectors.
 `memory` is set to `n` if the value given is larger than `n`.
 """
 mutable struct FomSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  Δx    :: S
-  x     :: S
-  w     :: S
-  p     :: S
-  q     :: S
-  V     :: Vector{S}
-  l     :: Vector{FC}
-  z     :: Vector{FC}
-  U     :: Vector{FC}
-  stats :: SimpleStats{T}
+  Δx         :: S
+  x          :: S
+  w          :: S
+  p          :: S
+  q          :: S
+  V          :: Vector{S}
+  l          :: Vector{FC}
+  z          :: Vector{FC}
+  U          :: Vector{FC}
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function FomSolver(n, m, memory, S)
     memory = min(n, memory)
@@ -1497,7 +1526,7 @@ mutable struct FomSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     z  = Vector{FC}(undef, memory)
     U  = Vector{FC}(undef, div(memory * (memory+1), 2))
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(Δx, x, w, p, q, V, l, z, U, stats)
+    solver = new{T,FC,S}(Δx, x, w, p, q, V, l, z, U, false, stats)
     return solver
   end
 
@@ -1520,23 +1549,24 @@ may be used in order to create these vectors.
 `memory` is set to `n + m` if the value given is larger than `n + m`.
 """
 mutable struct GpmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
-  wA    :: S
-  wB    :: S
-  dA    :: S
-  dB    :: S
-  Δx    :: S
-  Δy    :: S
-  x     :: S
-  y     :: S
-  q     :: S
-  p     :: S
-  V     :: Vector{S}
-  U     :: Vector{S}
-  gs    :: Vector{FC}
-  gc    :: Vector{T}
-  zt    :: Vector{FC}
-  R     :: Vector{FC}
-  stats :: SimpleStats{T}
+  wA         :: S
+  wB         :: S
+  dA         :: S
+  dB         :: S
+  Δx         :: S
+  Δy         :: S
+  x          :: S
+  y          :: S
+  q          :: S
+  p          :: S
+  V          :: Vector{S}
+  U          :: Vector{S}
+  gs         :: Vector{FC}
+  gc         :: Vector{T}
+  zt         :: Vector{FC}
+  R          :: Vector{FC}
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
 
   function GpmrSolver(n, m, memory, S)
     memory = min(n + m, memory)
@@ -1559,7 +1589,7 @@ mutable struct GpmrSolver{T,FC,S} <: KrylovSolver{T,FC,S}
     zt = Vector{FC}(undef, 2 * memory)
     R  = Vector{FC}(undef, memory * (2memory + 1))
     stats = SimpleStats(0, false, false, T[], T[], T[], "unknown")
-    solver = new{T,FC,S}(wA, wB, dA, dB, Δx, Δy, x, y, q, p, V, U, gs, gc, zt, R, stats)
+    solver = new{T,FC,S}(wA, wB, dA, dB, Δx, Δy, x, y, q, p, V, U, gs, gc, zt, R, false, stats)
     return solver
   end
 
