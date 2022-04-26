@@ -14,8 +14,8 @@ export gpmr, gpmr!
 """
     (x, y, stats) = gpmr(A, B, b::AbstractVector{FC}, c::AbstractVector{FC}; memory::Int=20,
                          C=I, D=I, E=I, F=I, atol::T=√eps(T), rtol::T=√eps(T),
-                         gsp::Bool=false, reorthogonalization::Bool=false, itmax::Int=0,
-                         restart::Bool=false, λ::FC=one(FC), μ::FC=one(FC),
+                         gsp::Bool=false, reorthogonalization::Bool=false,
+                         itmax::Int=0, λ::FC=one(FC), μ::FC=one(FC),
                          verbose::Int=0, history::Bool=false)
 
 `T` is an `AbstractFloat` such as `Float32`, `Float64` or `BigFloat`.
@@ -103,8 +103,8 @@ end
 
 function gpmr!(solver :: GpmrSolver{T,FC,S}, A, B, b :: AbstractVector{FC}, c :: AbstractVector{FC};
                C=I, D=I, E=I, F=I, atol :: T=√eps(T), rtol :: T=√eps(T),
-               gsp :: Bool=false, reorthogonalization :: Bool=false, itmax :: Int=0,
-               restart :: Bool=false, λ :: FC=one(FC), μ :: FC=one(FC),
+               gsp :: Bool=false, reorthogonalization :: Bool=false,
+               itmax :: Int=0, λ :: FC=one(FC), μ :: FC=one(FC),
                verbose :: Int=0, history::Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
 
   m, n = size(A)
@@ -130,29 +130,28 @@ function gpmr!(solver :: GpmrSolver{T,FC,S}, A, B, b :: AbstractVector{FC}, c ::
   # Determine λ and μ associated to generalized saddle point systems.
   gsp && (λ = one(FC) ; μ = zero(FC))
 
-  restart && (λ ≠ 0) && (!CisI || !EisI) && error("Restart with preconditioners is not supported.")
-  restart && (μ ≠ 0) && (!DisI || !FisI) && error("Restart with preconditioners is not supported.")
+  warm_start = solver.warm_start
+  warm_start && (λ ≠ 0) && (!CisI || !EisI) && error("Warm-start with preconditioners is not supported.")
+  warm_start && (μ ≠ 0) && (!DisI || !FisI) && error("Warm-start with preconditioners is not supported.")
 
   # Set up workspace.
-  allocate_if(!CisI  , solver, :q , S, m)
-  allocate_if(!DisI  , solver, :p , S, n)
-  allocate_if(!EisI  , solver, :wB, S, m)
-  allocate_if(!FisI  , solver, :wA, S, n)
-  allocate_if(restart, solver, :Δx, S, m)
-  allocate_if(restart, solver, :Δy, S, n)
+  allocate_if(!CisI, solver, :q , S, m)
+  allocate_if(!DisI, solver, :p , S, n)
+  allocate_if(!EisI, solver, :wB, S, m)
+  allocate_if(!FisI, solver, :wA, S, n)
   wA, wB, dA, dB, Δx, Δy = solver.wA, solver.wB, solver.dA, solver.dB, solver.Δx, solver.Δy
   x, y, V, U, gs, gc = solver.x, solver.y, solver.V, solver.U, solver.gs, solver.gc
   zt, R, stats = solver.zt, solver.R, solver.stats
   rNorms = stats.residuals
   reset!(stats)
-  b₀ = restart ? dA : b
-  c₀ = restart ? dB : c
+  b₀ = warm_start ? dA : b
+  c₀ = warm_start ? dB : c
   q  = CisI ? dA : solver.q
   p  = DisI ? dB : solver.p
 
   # Initial solutions x₀ and y₀.
-  restart && (Δx .= x)
-  restart && (Δy .= y)
+  warm_start && (Δx .= x)
+  warm_start && (Δy .= y)
   x .= zero(FC)
   y .= zero(FC)
 
@@ -174,7 +173,7 @@ function gpmr!(solver :: GpmrSolver{T,FC,S}, A, B, b :: AbstractVector{FC}, c ::
 
   # [ λI   A ] [ xₖ ] = [ b - λΔx - AΔy ] = [ b₀ ]
   # [  B  μI ] [ yₖ ]   [ c - BΔx - μΔy ]   [ c₀ ]
-  if restart
+  if warm_start
     mul!(b₀, A, Δy)
     (λ ≠ 0) && @kaxpy!(m, λ, Δx, b₀)
     @kaxpby!(m, one(FC), b, -one(FC), b₀)
@@ -452,8 +451,9 @@ function gpmr!(solver :: GpmrSolver{T,FC,S}, A, B, b :: AbstractVector{FC}, c ::
     wA .= y
     mul!(y, F, wA)
   end
-  restart && @kaxpy!(m, one(FC), Δx, x)
-  restart && @kaxpy!(n, one(FC), Δy, y)
+  warm_start && @kaxpy!(m, one(FC), Δx, x)
+  warm_start && @kaxpy!(n, one(FC), Δy, y)
+  solver.warm_start = false
 
   tired        && (status = "maximum number of iterations exceeded")
   solved       && (status = "solution good enough given atol and rtol")
