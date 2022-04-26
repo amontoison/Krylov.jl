@@ -1701,18 +1701,6 @@ for (KS, fun, nsol, nA, nAt) in [
     if $KS == GpmrSolver
       @inline Bprod(solver :: $KS) = solver.stats.niter
     end
-    if $KS == MinresSolver || $KS == GmresSolver
-      function warm_start!(solver :: $KS, x0)
-        n = length(solver.x)
-        length(x0) == n || error("x0 should have size $n")
-        if length(solver.Δx) == 0
-          S = typeof(solver.x)
-          allocate_if(true, solver, :Δx, S, n)
-        end
-        solver.Δx .= x0
-        solver.warm_start = true
-      end
-    end
     @inline nsolution(solver :: $KS) = $nsol
     ($nsol == 1) && @inline solution(solver :: $KS) = solver.x
     ($nsol == 2) && @inline solution(solver :: $KS) = solver.x, solver.y
@@ -1724,6 +1712,38 @@ for (KS, fun, nsol, nA, nAt) in [
       @inline issolved(solver :: $KS) = issolved_primal(solver) && issolved_dual(solver)
     else
       @inline issolved(solver :: $KS) = solver.stats.solved
+    end
+    if $KS in (BilqrSolver, TrilqrSolver, TricgSolver, TrimrSolver, GpmrSolver)
+      function warm_start!(solver :: $KS, x0, y0)
+        n = length(solver.x)
+        m = length(solver.y)
+        length(x0) == n || error("x0 should have size $n")
+        length(y0) == m || error("y0 should have size $m")
+        S = typeof(solver.x)
+        allocate_if(true, solver, :Δx, S, n)
+        allocate_if(true, solver, :Δy, S, m)
+        solver.Δx .= x0
+        solver.Δy .= y0
+        solver.warm_start = true
+        return solver
+      end
+    else
+      function warm_start!(solver :: $KS, x0)
+        n = length(solver.x)
+        # Special case for KS == CgLanczosShiftSolver
+        if eltype(solver.x) <: AbstractVector
+          n = length(solver.x[1])
+          S = typeof(solver.x[1])
+        else
+          n = length(solver.x)
+          S = typeof(solver.x)
+        end
+        length(x0) == n || error("x0 should have size $n")
+        allocate_if(true, solver, :Δx, S, n)
+        solver.Δx .= x0
+        solver.warm_start = true
+        return solver
+      end
     end
   end
 end
