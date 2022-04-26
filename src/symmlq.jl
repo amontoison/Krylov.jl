@@ -381,6 +381,7 @@ function symmlq!(solver :: SymmlqSolver{T,FC,S}, A, b :: AbstractVector{FC};
 
   # Update x
   warm_start && @kaxpy!(n, one(FC), Δx, x)
+  solver.warm_start = false
 
   # Update stats
   stats.niter = iter
@@ -388,6 +389,5 @@ function symmlq!(solver :: SymmlqSolver{T,FC,S}, A, b :: AbstractVector{FC};
   stats.Anorm = ANorm
   stats.Acond = Acond
   stats.status = status
-  solver.warm_start = false
   return solver
 end
