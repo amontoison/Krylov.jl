@@ -14,7 +14,7 @@ export fom, fom!
     (x, stats) = fom(A, b::AbstractVector{FC}; memory::Int=20,
                      M=I, N=I, atol::T=√eps(T), rtol::T=√eps(T),
                      reorthogonalization::Bool=false, itmax::Int=0,
-                     restart::Bool=false, verbose::Int=0, history::Bool=false)
+                     verbose::Int=0, history::Bool=false)
 
 `T` is an `AbstractFloat` such as `Float32`, `Float64` or `BigFloat`.
 `FC` is `T` or `Complex{T}`.
@@ -76,7 +76,7 @@ end
 function fom!(solver :: FomSolver{T,FC,S}, A, b :: AbstractVector{FC};
               M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
               reorthogonalization :: Bool=false, itmax :: Int=0,
-              restart :: Bool=false, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+              verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
 
   m, n = size(A)
   m == n || error("System must be square")
@@ -92,20 +92,20 @@ function fom!(solver :: FomSolver{T,FC,S}, A, b :: AbstractVector{FC};
   ktypeof(b) == S || error("ktypeof(b) ≠ $S")
 
   # Set up workspace.
-  allocate_if(!MisI  , solver, :q , S, n)
-  allocate_if(!NisI  , solver, :p , S, n)
-  allocate_if(restart, solver, :Δx, S, n)
+  allocate_if(!MisI, solver, :q, S, n)
+  allocate_if(!NisI, solver, :p, S, n)
   Δx, x, w, V, z = solver.Δx, solver.x, solver.w, solver.V, solver.z
   l, U, stats = solver.l, solver.U, solver.stats
+  warm_start = solver.warm_start
   rNorms = stats.residuals
   reset!(stats)
   q  = MisI ? w : solver.q
   r₀ = MisI ? w : solver.q
 
   # Initial solution x₀ and residual r₀.
-  restart && (Δx .= x)
+  warm_start && (Δx .= x)
   x .= zero(FC)  # x₀
-  if restart
+  if warm_start
     mul!(w, A, Δx)
     @kaxpby!(n, one(FC), b, -one(FC), w)
   else
@@ -119,6 +119,7 @@ function fom!(solver :: FomSolver{T,FC,S}, A, b :: AbstractVector{FC};
     stats.niter = 0
     stats.solved, stats.inconsistent = true, false
     stats.status = "x = 0 is a zero-residual solution"
+    solver.warm_start = false
     return solver
   end
 
@@ -250,7 +251,8 @@ function fom!(solver :: FomSolver{T,FC,S}, A, b :: AbstractVector{FC};
   solved    && (status = "solution good enough given atol and rtol")
 
   # Update x
-  restart && @kaxpy!(n, one(FC), Δx, x)
+  warm_start && @kaxpy!(n, one(FC), Δx, x)
+  solver.warm_start = false
 
   # Update stats
   stats.niter = iter
