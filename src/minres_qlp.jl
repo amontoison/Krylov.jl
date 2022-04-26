@@ -18,8 +18,8 @@ export minres_qlp, minres_qlp!
 
 """
     (x, stats) = minres_qlp(A, b::AbstractVector{FC};
-                            M=I, atol::T=√eps(T), rtol::T=√eps(T), ctol::T=√eps(T),
-                            λ::T=zero(T), itmax::Int=0, restart::Bool=false,
+                            M=I, atol::T=√eps(T), rtol::T=√eps(T),
+                            ctol::T=√eps(T), λ::T=zero(T), itmax::Int=0,
                             verbose::Int=0, history::Bool=false)
 
 `T` is an `AbstractFloat` such as `Float32`, `Float64` or `BigFloat`.
@@ -76,8 +76,8 @@ function minres_qlp!(solver :: MinresQlpSolver{T,FC,S}, A, b :: AbstractVector{F
 end
 
 function minres_qlp!(solver :: MinresQlpSolver{T,FC,S}, A, b :: AbstractVector{FC};
-                     M=I, atol :: T=√eps(T), rtol :: T=√eps(T), ctol :: T=√eps(T),
-                     λ ::T=zero(T), itmax :: Int=0, restart :: Bool=false,
+                     M=I, atol :: T=√eps(T), rtol :: T=√eps(T),
+                     ctol :: T=√eps(T), λ ::T=zero(T), itmax :: Int=0,
                      verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
 
   n, m = size(A)
@@ -93,20 +93,20 @@ function minres_qlp!(solver :: MinresQlpSolver{T,FC,S}, A, b :: AbstractVector{F
   ktypeof(b) == S || error("ktypeof(b) ≠ $S")
 
   # Set up workspace.
-  allocate_if(!MisI  , solver, :vₖ, S, n)
-  allocate_if(restart, solver, :Δx, S, n)
+  allocate_if(!MisI, solver, :vₖ, S, n)
   wₖ₋₁, wₖ, M⁻¹vₖ₋₁, M⁻¹vₖ = solver.wₖ₋₁, solver.wₖ, solver.M⁻¹vₖ₋₁, solver.M⁻¹vₖ
   Δx, x, p, stats = solver.Δx, solver.x, solver.p, solver.stats
+  warm_start = solver.warm_start
   rNorms, ArNorms = stats.residuals, stats.Aresiduals
   reset!(stats)
   vₖ = MisI ? M⁻¹vₖ : solver.vₖ
   vₖ₊₁ = MisI ? p : M⁻¹vₖ₋₁
 
   # Initial solution x₀
-  restart && (Δx .= x)
+  warm_start && (Δx .= x)
   x .= zero(FC)
 
-  if restart
+  if warm_start
     mul!(M⁻¹vₖ, A, Δx)
     (λ ≠ 0) && @kaxpy!(n, λ, Δx, M⁻¹vₖ)
     @kaxpby!(n, one(FC), b, -one(FC), M⁻¹vₖ)
@@ -128,6 +128,7 @@ function minres_qlp!(solver :: MinresQlpSolver{T,FC,S}, A, b :: AbstractVector{F
     stats.niter = 0
     stats.solved, stats.inconsistent = true, false
     stats.status = "x = 0 is a zero-residual solution"
+    stats.warm_start = false
     return solver
   end
 
@@ -375,7 +376,8 @@ function minres_qlp!(solver :: MinresQlpSolver{T,FC,S}, A, b :: AbstractVector{F
   solved       && (status = "solution good enough given atol and rtol")
 
   # Update x
-  restart && @kaxpy!(n, one(FC), Δx, x)
+  warm_start && @kaxpy!(n, one(FC), Δx, x)
+  solver.warm_start = false
 
  # Update stats
   stats.niter = iter
