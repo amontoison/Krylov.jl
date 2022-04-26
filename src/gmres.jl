@@ -92,8 +92,8 @@ function gmres!(solver :: GmresSolver{T,FC,S}, A, b :: AbstractVector{FC};
   ktypeof(b) == S || error("ktypeof(b) ≠ $S")
 
   # Set up workspace.
-  allocate_if(!MisI  , solver, :q , S, n)
-  allocate_if(!NisI  , solver, :p , S, n)
+  allocate_if(!MisI, solver, :q, S, n)
+  allocate_if(!NisI, solver, :p, S, n)
   Δx, x, w, V, z = solver.Δx, solver.x, solver.w, solver.V, solver.z
   c, s, R, stats = solver.c, solver.s, solver.R, solver.stats
   warm_start = solver.warm_start
@@ -267,12 +267,12 @@ function gmres!(solver :: GmresSolver{T,FC,S}, A, b :: AbstractVector{FC};
 
   # Update x
   warm_start && @kaxpy!(n, one(FC), Δx, x)
+  solver.warm_start = false
 
   # Update stats
   stats.niter = iter
   stats.solved = solved
   stats.inconsistent = inconsistent
   stats.status = status
-  solver.warm_start = false
   return solver
 end
