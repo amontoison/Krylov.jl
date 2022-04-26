@@ -15,8 +15,8 @@ export tricg, tricg!
     (x, y, stats) = tricg(A, b::AbstractVector{FC}, c::AbstractVector{FC};
                           M=I, N=I, atol::T=√eps(T), rtol::T=√eps(T),
                           spd::Bool=false, snd::Bool=false, flip::Bool=false,
-                          τ::T=one(T), ν::T=-one(T), itmax::Int=0, verbose::Int=0,
-                          restart::Bool=false, history::Bool=false)
+                          τ::T=one(T), ν::T=-one(T), itmax::Int=0,
+                          verbose::Int=0, history::Bool=false)
 
 `T` is an `AbstractFloat` such as `Float32`, `Float64` or `BigFloat`.
 `FC` is `T` or `Complex{T}`.
@@ -96,8 +96,8 @@ end
 function tricg!(solver :: TricgSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: AbstractVector{FC};
                 M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
                 spd :: Bool=false, snd :: Bool=false, flip :: Bool=false,
-                τ :: T=one(T), ν :: T=-one(T), itmax :: Int=0, verbose :: Int=0,
-                restart :: Bool=false, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+                τ :: T=one(T), ν :: T=-one(T), itmax :: Int=0,
+                verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
 
   m, n = size(A)
   length(b) == m || error("Inconsistent problem size")
@@ -123,17 +123,16 @@ function tricg!(solver :: TricgSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: 
   spd  && (τ =  one(T) ; ν =  one(T))
   snd  && (τ = -one(T) ; ν = -one(T))
 
-  restart && (τ ≠ 0) && !MisI && error("Restart with preconditioners is not supported.")
-  restart && (ν ≠ 0) && !NisI && error("Restart with preconditioners is not supported.")
+  warm_start = solver.warm_start
+  warm_start && (τ ≠ 0) && !MisI && error("Warm-start with preconditioners is not supported.")
+  warm_start && (ν ≠ 0) && !NisI && error("Warm-start with preconditioners is not supported.")
 
   # Compute the adjoint of A
   Aᵀ = A'
 
   # Set up workspace.
-  allocate_if(!MisI  , solver, :vₖ, S, m)
-  allocate_if(!NisI  , solver, :uₖ, S, n)
-  allocate_if(restart, solver, :Δx, S, m)
-  allocate_if(restart, solver, :Δy, S, n)
+  allocate_if(!MisI, solver, :vₖ, S, m)
+  allocate_if(!NisI, solver, :uₖ, S, n)
   Δy, yₖ, N⁻¹uₖ₋₁, N⁻¹uₖ, p = solver.Δy, solver.y, solver.N⁻¹uₖ₋₁, solver.N⁻¹uₖ, solver.p
   Δx, xₖ, M⁻¹vₖ₋₁, M⁻¹vₖ, q = solver.Δx, solver.x, solver.M⁻¹vₖ₋₁, solver.M⁻¹vₖ, solver.q
   gy₂ₖ₋₁, gy₂ₖ, gx₂ₖ₋₁, gx₂ₖ = solver.gy₂ₖ₋₁, solver.gy₂ₖ, solver.gx₂ₖ₋₁, solver.gx₂ₖ
@@ -141,16 +140,16 @@ function tricg!(solver :: TricgSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: 
   uₖ = NisI ? N⁻¹uₖ : solver.uₖ
   vₖ₊₁ = MisI ? q : vₖ
   uₖ₊₁ = NisI ? p : uₖ
-  b₀ = restart ? q : b
-  c₀ = restart ? p : c
+  b₀ = warm_start ? q : b
+  c₀ = warm_start ? p : c
 
   stats = solver.stats
   rNorms = stats.residuals
   reset!(stats)
 
   # Initial solutions x₀ and y₀.
-  restart && (Δx .= xₖ)
-  restart && (Δy .= yₖ)
+  warm_start && (Δx .= xₖ)
+  warm_start && (Δy .= yₖ)
   xₖ .= zero(FC)
   yₖ .= zero(FC)
 
@@ -163,7 +162,7 @@ function tricg!(solver :: TricgSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: 
 
   # [ τI    A ] [ xₖ ] = [ b -  τΔx - AΔy ] = [ b₀ ]
   # [  Aᵀ  νI ] [ yₖ ]   [ c - AᵀΔx - νΔy ]   [ c₀ ]
-  if restart
+  if warm_start
     mul!(b₀, A, Δy)
     (τ ≠ 0) && @kaxpy!(m, τ, Δx, b₀)
     @kaxpby!(m, one(FC), b, -one(FC), b₀)
@@ -388,8 +387,9 @@ function tricg!(solver :: TricgSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: 
   solved    && (status = "solution good enough given atol and rtol")
 
   # Update x and y
-  restart && @kaxpy!(m, one(FC), Δx, xₖ)
-  restart && @kaxpy!(n, one(FC), Δy, yₖ)
+  warm_start && @kaxpy!(m, one(FC), Δx, xₖ)
+  warm_start && @kaxpy!(n, one(FC), Δy, yₖ)
+  solver.warm_start = false
 
   # Update stats
   stats.niter = iter
