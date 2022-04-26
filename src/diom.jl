@@ -13,8 +13,7 @@ export diom, diom!
 """
     (x, stats) = diom(A, b::AbstractVector{FC}; memory::Int=20,
                       M=I, N=I, atol::T=√eps(T), rtol::T=√eps(T),
-                      restart::Bool=false, itmax::Int=0,
-                      verbose::Int=0, history::Bool=false)
+                      itmax::Int=0, verbose::Int=0, history::Bool=false)
 
 `T` is an `AbstractFloat` such as `Float32`, `Float64` or `BigFloat`.
 `FC` is `T` or `Complex{T}`.
@@ -79,8 +78,7 @@ end
 
 function diom!(solver :: DiomSolver{T,FC,S}, A, b :: AbstractVector{FC};
                M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
-               restart :: Bool=false, itmax :: Int=0,
-               verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+               itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
 
   m, n = size(A)
   m == n || error("System must be square")
@@ -96,20 +94,20 @@ function diom!(solver :: DiomSolver{T,FC,S}, A, b :: AbstractVector{FC};
   ktypeof(b) == S || error("ktypeof(b) ≠ $S")
 
   # Set up workspace.
-  allocate_if(!MisI  , solver, :w , S, n)
-  allocate_if(!NisI  , solver, :z , S, n)
-  allocate_if(restart, solver, :Δx, S, n)
+  allocate_if(!MisI, solver, :w, S, n)
+  allocate_if(!NisI, solver, :z, S, n)
   Δx, x, t, P, V = solver.Δx, solver.x, solver.t, solver.P, solver.V
   L, H, stats = solver.L, solver.H, solver.stats
+  warm_start = solver.warm_start
   rNorms = stats.residuals
   reset!(stats)
   w  = MisI ? t : solver.w
   r₀ = MisI ? t : solver.w
 
   # Initial solution x₀ and residual r₀.
-  restart && (Δx .= x)
+  warm_start && (Δx .= x)
   x .= zero(FC)  # x₀
-  if restart
+  if warm_start
     mul!(t, A, Δx)
     @kaxpby!(n, one(FC), b, -one(FC), t)
   else
@@ -123,6 +121,7 @@ function diom!(solver :: DiomSolver{T,FC,S}, A, b :: AbstractVector{FC};
     stats.niter = 0
     stats.solved, stats.inconsistent = true, false
     stats.status = "x = 0 is a zero-residual solution"
+    solver.warm_start = false
     return solver
   end
 
@@ -235,7 +234,8 @@ function diom!(solver :: DiomSolver{T,FC,S}, A, b :: AbstractVector{FC};
   status = tired ? "maximum number of iterations exceeded" : "solution good enough given atol and rtol"
 
   # Update x
-  restart && @kaxpy!(n, one(FC), Δx, x)
+  warm_start && @kaxpy!(n, one(FC), Δx, x)
+  solver.warm_start = false
 
   # Update stats
   stats.niter = iter
