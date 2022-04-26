@@ -59,11 +59,25 @@ but simpler to implement. Only the x-part of the solution is returned.
 
 A preconditioner M may be provided.
 
+CRMR can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = crmr(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * D. Orban and M. Arioli, [*Iterative Solution of Symmetric Quasi-Definite Linear Systems*](https://doi.org/10.1137/1.9781611974737), Volume 3 of Spotlights. SIAM, Philadelphia, PA, 2017.
 * D. Orban, [*The Projected Golub-Kahan Process for Constrained Linear Least-Squares Problems*](https://dx.doi.org/10.13140/RG.2.2.17443.99360). Cahier du GERAD G-2014-15, 2014.
 """
+function crmr end
+
+function crmr(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = CrmrSolver(A, b)
+  crmr!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function crmr(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = CrmrSolver(A, b)
   crmr!(solver, A, b; kwargs...)
@@ -71,12 +85,21 @@ function crmr(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
 end
 
 """
-    solver = crmr!(solver::CrmrSolver, args...; kwargs...)
+    solver = crmr!(solver::CrmrSolver, A, b; kwargs...)
+    solver = crmr!(solver::CrmrSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`crmr`](@ref).
+where `kwargs` are keyword arguments of [`crmr`](@ref).
 
 See [`CrmrSolver`](@ref) for more details about the `solver`.
 """
+function crmr! end
+
+function crmr!(solver :: CrmrSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  crmr!(solver, A, b; kwargs...)
+  return solver
+end
+
 function crmr!(solver :: CrmrSolver{T,FC,S}, A, b :: AbstractVector{FC};
                M=I, λ :: T=zero(T), atol :: T=√eps(T),
                rtol :: T=√eps(T), itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

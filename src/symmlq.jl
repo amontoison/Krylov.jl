@@ -35,10 +35,24 @@ SYMMLQ produces monotonic errors ‖x*-x‖₂.
 A preconditioner M may be provided in the form of a linear operator and is
 assumed to be symmetric and positive definite.
 
+SYMMLQ can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = symmlq(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * C. C. Paige and M. A. Saunders, [*Solution of Sparse Indefinite Systems of Linear Equations*](https://doi.org/10.1137/0712047), SIAM Journal on Numerical Analysis, 12(4), pp. 617--629, 1975.
 """
+function symmlq end
+
+function symmlq(A, b :: AbstractVector{FC}, x0 :: AbstractVector; window :: Int=5, kwargs...) where FC <: FloatOrComplex
+  solver = SymmlqSolver(A, b, window=window)
+  symmlq!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function symmlq(A, b :: AbstractVector{FC}; window :: Int=5, kwargs...) where FC <: FloatOrComplex
   solver = SymmlqSolver(A, b, window=window)
   symmlq!(solver, A, b; kwargs...)
@@ -46,12 +60,21 @@ function symmlq(A, b :: AbstractVector{FC}; window :: Int=5, kwargs...) where FC
 end
 
 """
-    solver = symmlq!(solver::SymmlqSolver, args...; kwargs...)
+    solver = symmlq!(solver::SymmlqSolver, A, b; kwargs...)
+    solver = symmlq!(solver::SymmlqSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`symmlq`](@ref).
+where `kwargs` are keyword arguments of [`symmlq`](@ref).
 
 See [`SymmlqSolver`](@ref) for more details about the `solver`.
 """
+function symmlq! end
+
+function symmlq!(solver :: SymmlqSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  symmlq!(solver, A, b; kwargs...)
+  return solver
+end
+
 function symmlq!(solver :: SymmlqSolver{T,FC,S}, A, b :: AbstractVector{FC};
                  M=I, λ :: T=zero(T), transfer_to_cg :: Bool=true,
                  λest :: T=zero(T), atol :: T=√eps(T), rtol :: T=√eps(T),

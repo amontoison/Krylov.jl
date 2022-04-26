@@ -36,10 +36,24 @@ M also indicates the weighted norm in which residuals are measured.
 If `itmax=0`, the default number of iterations is set to `2 * n`,
 with `n = length(b)`.
 
+CG can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = cg(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * M. R. Hestenes and E. Stiefel, [*Methods of conjugate gradients for solving linear systems*](https://doi.org/10.6028/jres.049.044), Journal of Research of the National Bureau of Standards, 49(6), pp. 409--436, 1952.
 """
+function cg end
+
+function cg(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = CgSolver(A, b)
+  cg!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function cg(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = CgSolver(A, b)
   cg!(solver, A, b; kwargs...)
@@ -47,12 +61,21 @@ function cg(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
 end
 
 """
-    solver = cg!(solver::CgSolver, args...; kwargs...)
+    solver = cg!(solver::CgSolver, A, b; kwargs...)
+    solver = cg!(solver::CgSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`cg`](@ref).
+where `kwargs` are keyword arguments of [`cg`](@ref).
 
 See [`CgSolver`](@ref) for more details about the `solver`.
 """
+function cg! end
+
+function cg!(solver :: CgSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  cg!(solver, A, b; kwargs...)
+  return solver
+end
+
 function cg!(solver :: CgSolver{T,FC,S}, A, b :: AbstractVector{FC};
              M=I, atol :: T=√eps(T), rtol :: T=√eps(T), restart :: Bool=false,
              itmax :: Int=0, radius :: T=zero(T), linesearch :: Bool=false,

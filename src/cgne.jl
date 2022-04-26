@@ -61,11 +61,25 @@ but simpler to implement. Only the x-part of the solution is returned.
 
 A preconditioner M may be provided in the form of a linear operator.
 
+CGNE can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = cgne(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * J. E. Craig, [*The N-step iteration procedures*](https://doi.org/10.1002/sapm195534164), Journal of Mathematics and Physics, 34(1), pp. 64--73, 1955.
 * J. E. Craig, *Iterations Procedures for Simultaneous Equations*, Ph.D. Thesis, Department of Electrical Engineering, MIT, 1954.
 """
+function cgne end
+
+function cgne(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = CgneSolver(A, b)
+  cgne!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function cgne(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = CgneSolver(A, b)
   cgne!(solver, A, b; kwargs...)
@@ -73,12 +87,21 @@ function cgne(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
 end
 
 """
-    solver = cgne!(solver::CgneSolver, args...; kwargs...)
+    solver = cgne!(solver::CgneSolver, A, b; kwargs...)
+    solver = cgne!(solver::CgneSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`cgne`](@ref).
+where `kwargs` are keyword arguments of [`cgne`](@ref).
 
 See [`CgneSolver`](@ref) for more details about the `solver`.
 """
+function cgne! end
+
+function cgne!(solver :: CgneSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0::AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  cgne!(solver, A, b; kwargs...)
+  return solver
+end
+
 function cgne!(solver :: CgneSolver{T,FC,S}, A, b :: AbstractVector{FC};
                M=I, λ :: T=zero(T), atol :: T=√eps(T), rtol :: T=√eps(T),
                itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

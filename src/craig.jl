@@ -85,11 +85,25 @@ In this case, `M` can still be specified and indicates the weighted norm in whic
 
 In this implementation, both the x and y-parts of the solution are returned.
 
+CRAIG can be warm-started from an initial guess `x0` with the method
+
+    (x, y, stats) = craig(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * C. C. Paige and M. A. Saunders, [*LSQR: An Algorithm for Sparse Linear Equations and Sparse Least Squares*](https://doi.org/10.1145/355984.355989), ACM Transactions on Mathematical Software, 8(1), pp. 43--71, 1982.
 * M. A. Saunders, [*Solutions of Sparse Rectangular Systems Using LSQR and CRAIG*](https://doi.org/10.1007/BF01739829), BIT Numerical Mathematics, 35(4), pp. 588--604, 1995.
 """
+function craig end
+
+function craig(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = CraigSolver(A, b)
+  craig!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.y, solver.stats)
+end
+
 function craig(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = CraigSolver(A, b)
   craig!(solver, A, b; kwargs...)
@@ -97,12 +111,21 @@ function craig(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
 end
 
 """
-    solver = craig!(solver::CraigSolver, args...; kwargs...)
+    solver = craig!(solver::CraigSolver, A, b; kwargs...)
+    solver = craig!(solver::CraigSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`craig`](@ref).
+where `kwargs` are keyword arguments of [`craig`](@ref).
 
 See [`CraigSolver`](@ref) for more details about the `solver`.
 """
+function craig! end
+
+function craig!(solver :: CraigSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  craig!(solver, A, b; kwargs...)
+  return solver
+end
+
 function craig!(solver :: CraigSolver{T,FC,S}, A, b :: AbstractVector{FC};
                 M=I, N=I, sqd :: Bool=false, λ :: T=zero(T), atol :: T=√eps(T),
                 btol :: T=√eps(T), rtol :: T=√eps(T), conlim :: T=1/√eps(T), itmax :: Int=0,

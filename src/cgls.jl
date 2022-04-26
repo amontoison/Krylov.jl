@@ -52,11 +52,25 @@ CGLS produces monotonic residuals ‖r‖₂ but not optimality residuals ‖A�
 It is formally equivalent to LSQR, though can be slightly less accurate,
 but simpler to implement.
 
+CGLS can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = cgls(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * M. R. Hestenes and E. Stiefel. [*Methods of conjugate gradients for solving linear systems*](https://doi.org/10.6028/jres.049.044), Journal of Research of the National Bureau of Standards, 49(6), pp. 409--436, 1952.
 * A. Björck, T. Elfving and Z. Strakos, [*Stability of Conjugate Gradient and Lanczos Methods for Linear Least Squares Problems*](https://doi.org/10.1137/S089547989631202X), SIAM Journal on Matrix Analysis and Applications, 19(3), pp. 720--736, 1998.
 """
+function cgls end
+
+function cgls(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = CglsSolver(A, b)
+  cgls!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function cgls(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = CglsSolver(A, b)
   cgls!(solver, A, b; kwargs...)
@@ -64,12 +78,21 @@ function cgls(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
 end
 
 """
-    solver = cgls!(solver::CglsSolver, args...; kwargs...)
+    solver = cgls!(solver::CglsSolver, A, b; kwargs...)
+    solver = cgls!(solver::CglsSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`cgls`](@ref).
+where `kwargs` are keyword arguments of [`cgls`](@ref).
 
 See [`CglsSolver`](@ref) for more details about the `solver`.
 """
+function cgls! end
+
+function cgls!(solver :: CglsSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  cgls!(solver, A, b; kwargs...)
+  return solver
+end
+
 function cgls!(solver :: CglsSolver{T,FC,S}, A, b :: AbstractVector{FC};
                M=I, λ :: T=zero(T), atol :: T=√eps(T), rtol :: T=√eps(T),
                radius :: T=zero(T), itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

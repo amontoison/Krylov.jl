@@ -126,11 +126,25 @@ The iterations stop as soon as one of the following conditions holds true:
 * the lower bound on the LQ forward error is less than etol * ‖xᴸ‖
 * the upper bound on the CG forward error is less than utol * ‖xᶜ‖
 
+LSLQ can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = lslq(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * R. Estrin, D. Orban and M. A. Saunders, [*Euclidean-norm error bounds for SYMMLQ and CG*](https://doi.org/10.1137/16M1094816), SIAM Journal on Matrix Analysis and Applications, 40(1), pp. 235--253, 2019.
 * R. Estrin, D. Orban and M. A. Saunders, [*LSLQ: An Iterative Method for Linear Least-Squares with an Error Minimization Property*](https://doi.org/10.1137/17M1113552), SIAM Journal on Matrix Analysis and Applications, 40(1), pp. 254--275, 2019.
 """
+function lslq end
+
+function lslq(A, b :: AbstractVector{FC}, x0 :: AbstractVector; window :: Int=5, kwargs...) where FC <: FloatOrComplex
+  solver = LslqSolver(A, b, window=window)
+  lslq!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function lslq(A, b :: AbstractVector{FC}; window :: Int=5, kwargs...) where FC <: FloatOrComplex
   solver = LslqSolver(A, b, window=window)
   lslq!(solver, A, b; kwargs...)
@@ -138,12 +152,21 @@ function lslq(A, b :: AbstractVector{FC}; window :: Int=5, kwargs...) where FC <
 end
 
 """
-    solver = lslq!(solver::LslqSolver, args...; kwargs...)
+    solver = lslq!(solver::LslqSolver, A, b; kwargs...)
+    solver = lslq!(solver::LslqSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`lslq`](@ref).
+where `kwargs` are keyword arguments of [`lslq`](@ref).
 
 See [`LslqSolver`](@ref) for more details about the `solver`.
 """
+function lslq! end
+
+function lslq!(solver :: LslqSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  lslq!(solver, A, b; kwargs...)
+  return solver
+end
+
 function lslq!(solver :: LslqSolver{T,FC,S}, A, b :: AbstractVector{FC};
                M=I, N=I, sqd :: Bool=false, λ :: T=zero(T),
                atol :: T=√eps(T), btol :: T=√eps(T), etol :: T=√eps(T),

@@ -37,12 +37,26 @@ It's considered as a generalization of MINRES.
 It can also be applied to under-determined and over-determined problems.
 USYMQR finds the minimum-norm solution if problems are inconsistent.
 
+USYMQR can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = usymqr(A, b, c, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * M. A. Saunders, H. D. Simon, and E. L. Yip, [*Two Conjugate-Gradient-Type Methods for Unsymmetric Linear Equations*](https://doi.org/10.1137/0725052), SIAM Journal on Numerical Analysis, 25(4), pp. 927--940, 1988.
 * A. Buttari, D. Orban, D. Ruiz and D. Titley-Peloquin, [*A tridiagonalization method for symmetric saddle-point and quasi-definite systems*](https://doi.org/10.1137/18M1194900), SIAM Journal on Scientific Computing, 41(5), pp. 409--432, 2019.
 * A. Montoison and D. Orban, [*BiLQ: An Iterative Method for Nonsymmetric Linear Systems with a Quasi-Minimum Error Property*](https://doi.org/10.1137/19M1290991), SIAM Journal on Matrix Analysis and Applications, 41(3), pp. 1145--1166, 2020.
 """
+function usymqr end
+
+function usymqr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = UsymqrSolver(A, b)
+  usymqr!(solver, A, b, c, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function usymqr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = UsymqrSolver(A, b)
   usymqr!(solver, A, b, c; kwargs...)
@@ -50,12 +64,22 @@ function usymqr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}; kwargs...) 
 end
 
 """
-    solver = usymqr!(solver::UsymqrSolver, args...; kwargs...)
+    solver = usymqr!(solver::UsymqrSolver, A, b, c; kwargs...)
+    solver = usymqr!(solver::UsymqrSolver, A, b, c, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`usymqr`](@ref).
+where `kwargs` are keyword arguments of [`usymqr`](@ref).
 
 See [`UsymqrSolver`](@ref) for more details about the `solver`.
 """
+function usymqr! end
+
+function usymqr!(solver :: UsymqrSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: AbstractVector{FC},
+                 x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  usymqr!(solver, A, b, c; kwargs...)
+  return solver
+end
+
 function usymqr!(solver :: UsymqrSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: AbstractVector{FC};
                  atol :: T=√eps(T), rtol :: T=√eps(T),
                  itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

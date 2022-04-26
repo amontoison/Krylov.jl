@@ -52,10 +52,24 @@ TriMR stops when `itmax` iterations are reached or when `‖rₖ‖ ≤ atol + �
 Additional details can be displayed if verbose mode is enabled (verbose > 0).
 Information will be displayed every `verbose` iterations.
 
+TriMR can be warm-started from initial guesses `x0` and `y0` with the method
+
+    (x, y, stats) = trimr(A, b, c, x0, y0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * A. Montoison and D. Orban, [*TriCG and TriMR: Two Iterative Methods for Symmetric Quasi-Definite Systems*](https://doi.org/10.1137/20M1363030), SIAM Journal on Scientific Computing, 43(4), pp. 2502--2525, 2021.
 """
+function trimr end
+
+function trimr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}, x0 :: AbstractVector, y0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = TrimrSolver(A, b)
+  trimr!(solver, A, b, c, x0, y0; kwargs...)
+  return (solver.x, solver.y, solver.stats)
+end
+
 function trimr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = TrimrSolver(A, b)
   trimr!(solver, A, b, c; kwargs...)
@@ -63,12 +77,22 @@ function trimr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}; kwargs...) w
 end
 
 """
-    solver = trimr!(solver::TrimrSolver, args...; kwargs...)
+    solver = trimr!(solver::TrimrSolver, A, b, c; kwargs...)
+    solver = trimr!(solver::TrimrSolver, A, b, c, x0, y0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`trimr`](@ref).
+where `kwargs` are keyword arguments of [`trimr`](@ref).
 
 See [`TrimrSolver`](@ref) for more details about the `solver`.
 """
+function trimr! end
+
+function trimr!(solver :: TrimrSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: AbstractVector{FC},
+                x0 :: AbstractVector, y0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0, y0)
+  trimr!(solver, A, b, c; kwargs...)
+  return solver
+end
+
 function trimr!(solver :: TrimrSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: AbstractVector{FC};
                 M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
                 spd :: Bool=false, snd :: Bool=false, flip :: Bool=false, sp :: Bool=false,

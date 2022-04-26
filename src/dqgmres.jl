@@ -34,10 +34,24 @@ This implementation allows a left preconditioner M and a right preconditioner N.
 - Right preconditioning : AN⁻¹u = b with x = N⁻¹u
 - Split preconditioning : M⁻¹AN⁻¹u = M⁻¹b with x = N⁻¹u
 
+DQGMRES can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = dqgmres(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * Y. Saad and K. Wu, [*DQGMRES: a quasi minimal residual algorithm based on incomplete orthogonalization*](https://doi.org/10.1002/(SICI)1099-1506(199607/08)3:4%3C329::AID-NLA86%3E3.0.CO;2-8), Numerical Linear Algebra with Applications, Vol. 3(4), pp. 329--343, 1996.
 """
+function dqgmres end
+
+function dqgmres(A, b :: AbstractVector{FC}, x0 :: AbstractVector; memory :: Int=20, kwargs...) where FC <: FloatOrComplex
+  solver = DqgmresSolver(A, b, memory)
+  dqgmres!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function dqgmres(A, b :: AbstractVector{FC}; memory :: Int=20, kwargs...) where FC <: FloatOrComplex
   solver = DqgmresSolver(A, b, memory)
   dqgmres!(solver, A, b; kwargs...)
@@ -45,15 +59,24 @@ function dqgmres(A, b :: AbstractVector{FC}; memory :: Int=20, kwargs...) where 
 end
 
 """
-    solver = dqgmres!(solver::DqgmresSolver, args...; kwargs...)
+    solver = dqgmres!(solver::DqgmresSolver, A, b; kwargs...)
+    solver = dqgmres!(solver::DqgmresSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`dqgmres`](@ref).
+where `kwargs` are keyword arguments of [`dqgmres`](@ref).
 
 Note that the `memory` keyword argument is the only exception.
 It's required to create a `DqgmresSolver` and can't be changed later.
 
 See [`DqgmresSolver`](@ref) for more details about the `solver`.
 """
+function dqgmres! end
+
+function dqgmres!(solver :: DqgmresSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  dqgmres!(solver, A, b; kwargs...)
+  return solver
+end
+
 function dqgmres!(solver :: DqgmresSolver{T,FC,S}, A, b :: AbstractVector{FC};
                   M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
                   restart :: Bool=false, itmax :: Int=0,

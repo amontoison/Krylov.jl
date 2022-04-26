@@ -41,11 +41,25 @@ Information will be displayed every `verbose` iterations.
 
 This implementation allows a left preconditioner `M` and a right preconditioner `N`.
 
+BICGSTAB can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = bicgstab(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * H. A. van der Vorst, [*Bi-CGSTAB: A fast and smoothly converging variant of Bi-CG for the solution of nonsymmetric linear systems*](https://doi.org/10.1137/0913035), SIAM Journal on Scientific and Statistical Computing, 13(2), pp. 631--644, 1992.
 * G. L.G. Sleijpen and D. R. Fokkema, *BiCGstab(ℓ) for linear equations involving unsymmetric matrices with complex spectrum*, Electronic Transactions on Numerical Analysis, 1, pp. 11--32, 1993.
 """
+function bicgstab end
+
+function bicgstab(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = BicgstabSolver(A, b)
+  bicgstab!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function bicgstab(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = BicgstabSolver(A, b)
   bicgstab!(solver, A, b; kwargs...)
@@ -53,12 +67,21 @@ function bicgstab(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComp
 end
 
 """
-    solver = bicgstab!(solver::BicgstabSolver, args...; kwargs...)
+    solver = bicgstab!(solver::BicgstabSolver, A, b; kwargs...)
+    solver = bicgstab!(solver::BicgstabSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`bicgstab`](@ref).
+where `kwargs` are keyword arguments of [`bicgstab`](@ref).
 
 See [`BicgstabSolver`](@ref) for more details about the `solver`.
 """
+function bicgstab! end
+
+function bicgstab!(solver :: BicgstabSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  bicgstab!(solver, A, b; kwargs...)
+  return solver
+end
+
 function bicgstab!(solver :: BicgstabSolver{T,FC,S}, A, b :: AbstractVector{FC}; c :: AbstractVector{FC}=b,
                    M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
                    itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

@@ -79,10 +79,24 @@ The system above represents the optimality conditions of
 In this case, `N` can still be specified and indicates the weighted norm in which `x` and `Aᵀr` should be measured.
 `r` can be recovered by computing `E⁻¹(b - Ax)`.
 
+LSQR can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = lsqr(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * C. C. Paige and M. A. Saunders, [*LSQR: An Algorithm for Sparse Linear Equations and Sparse Least Squares*](https://doi.org/10.1145/355984.355989), ACM Transactions on Mathematical Software, 8(1), pp. 43--71, 1982.
 """
+function lsqr end
+
+function lsqr(A, b :: AbstractVector{FC}, x0 :: AbstractVector; window :: Int=5, kwargs...) where FC <: FloatOrComplex
+  solver = LsqrSolver(A, b, window=window)
+  lsqr!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function lsqr(A, b :: AbstractVector{FC}; window :: Int=5, kwargs...) where FC <: FloatOrComplex
   solver = LsqrSolver(A, b, window=window)
   lsqr!(solver, A, b; kwargs...)
@@ -90,12 +104,21 @@ function lsqr(A, b :: AbstractVector{FC}; window :: Int=5, kwargs...) where FC <
 end
 
 """
-    solver = lsqr!(solver::LsqrSolver, args...; kwargs...)
+    solver = lsqr!(solver::LsqrSolver, A, b; kwargs...)
+    solver = lsqr!(solver::LsqrSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`lsqr`](@ref).
+where `kwargs` are keyword arguments of [`lsqr`](@ref).
 
 See [`LsqrSolver`](@ref) for more details about the `solver`.
 """
+function lsqr! end
+
+function lsqr!(solver :: LsqrSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  lsqr!(solver, A, b; kwargs...)
+  return solver
+end
+
 function lsqr!(solver :: LsqrSolver{T,FC,S}, A, b :: AbstractVector{FC};
                M=I, N=I, sqd :: Bool=false, λ :: T=zero(T),
                axtol :: T=√eps(T), btol :: T=√eps(T),

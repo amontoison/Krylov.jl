@@ -39,10 +39,24 @@ TFQMR and BICGSTAB were developed to remedy this difficulty.»
 
 This implementation allows a left preconditioner M and a right preconditioner N.
 
+CGS can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = cgs(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * P. Sonneveld, [*CGS, A Fast Lanczos-Type Solver for Nonsymmetric Linear systems*](https://doi.org/10.1137/0910004), SIAM Journal on Scientific and Statistical Computing, 10(1), pp. 36--52, 1989.
 """
+function cgs end
+
+function cgs(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = CgsSolver(A, b)
+  cgs!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function cgs(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = CgsSolver(A, b)
   cgs!(solver, A, b; kwargs...)
@@ -50,12 +64,21 @@ function cgs(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
 end
 
 """
-    solver = cgs!(solver::CgsSolver, args...; kwargs...)
+    solver = cgs!(solver::CgsSolver, A, b; kwargs...)
+    solver = cgs!(solver::CgsSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`cgs`](@ref).
+where `kwargs` are keyword arguments of [`cgs`](@ref).
 
 See [`CgsSolver`](@ref) for more details about the `solver`.
 """
+function cgs! end
+
+function cgs!(solver :: CgsSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  cgs!(solver, A, b; kwargs...)
+  return solver
+end
+
 function cgs!(solver :: CgsSolver{T,FC,S}, A, b :: AbstractVector{FC}; c :: AbstractVector{FC}=b,
               M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
               itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

@@ -81,11 +81,25 @@ It is formally equivalent to CRMR, though can be slightly more accurate,
 and intricate to implement. Both the x- and y-parts of the solution are
 returned.
 
+CRAIGMR can be warm-started from an initial guess `x0` with the method
+
+    (x, y, stats) = craigmr(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * D. Orban and M. Arioli. [*Iterative Solution of Symmetric Quasi-Definite Linear Systems*](https://doi.org/10.1137/1.9781611974737), Volume 3 of Spotlights. SIAM, Philadelphia, PA, 2017.
 * D. Orban, [*The Projected Golub-Kahan Process for Constrained, Linear Least-Squares Problems*](https://dx.doi.org/10.13140/RG.2.2.17443.99360). Cahier du GERAD G-2014-15, 2014.
 """
+function craigmr end
+
+function craigmr(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = CraigmrSolver(A, b)
+  craigmr!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.y, solver.stats)
+end
+
 function craigmr(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = CraigmrSolver(A, b)
   craigmr!(solver, A, b; kwargs...)
@@ -93,12 +107,21 @@ function craigmr(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrCompl
 end
 
 """
-    solver = craigmr!(solver::CraigmrSolver, args...; kwargs...)
+    solver = craigmr!(solver::CraigmrSolver, A, b; kwargs...)
+    solver = craigmr!(solver::CraigmrSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`craigmr`](@ref).
+where `kwargs` are keyword arguments of [`craigmr`](@ref).
 
 See [`CraigmrSolver`](@ref) for more details about the `solver`.
 """
+function craigmr! end
+
+function craigmr!(solver :: CraigmrSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  craigmr!(solver, A, b; kwargs...)
+  return solver
+end
+
 function craigmr!(solver :: CraigmrSolver{T,FC,S}, A, b :: AbstractVector{FC};
                   M=I, N=I, sqd :: Bool=false, λ :: T=zero(T), atol :: T=√eps(T),
                   rtol :: T=√eps(T), itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

@@ -78,10 +78,24 @@ In this implementation, both the x and y-parts of the solution are returned.
 The bound is valid if λ>0 or σ>0 where σ should be strictly smaller than the smallest positive singular value.
 For instance σ:=(1-1e-7)σₘᵢₙ .
 
+LNLQ can be warm-started from an initial guess `x0` with the method
+
+    (x, y, stats) = lnlq(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * R. Estrin, D. Orban, M.A. Saunders, [*LNLQ: An Iterative Method for Least-Norm Problems with an Error Minimization Property*](https://doi.org/10.1137/18M1194948), SIAM Journal on Matrix Analysis and Applications, 40(3), pp. 1102--1124, 2019.
 """
+function lnlq end
+
+function lnlq(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = LnlqSolver(A, b)
+  lnlq!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.y, solver.stats)
+end
+
 function lnlq(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = LnlqSolver(A, b)
   lnlq!(solver, A, b; kwargs...)
@@ -89,12 +103,21 @@ function lnlq(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
 end
 
 """
-    solver = lnlq!(solver::LnlqSolver, args...; kwargs...)
+    solver = lnlq!(solver::LnlqSolver, A, b; kwargs...)
+    solver = lnlq!(solver::LnlqSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`lnlq`](@ref).
+where `kwargs` are keyword arguments of [`lnlq`](@ref).
 
 See [`LnlqSolver`](@ref) for more details about the `solver`.
 """
+function lnlq! end
+
+function lnlq!(solver :: LnlqSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  lnlq!(solver, A, b; kwargs...)
+  return solver
+end
+
 function lnlq!(solver :: LnlqSolver{T,FC,S}, A, b :: AbstractVector{FC};
                M=I, N=I, sqd :: Bool=false, λ :: T=zero(T), σ :: T=zero(T),
                atol :: T=√eps(T), rtol :: T=√eps(T), etolx :: T=√eps(T), etoly :: T=√eps(T), itmax :: Int=0,

@@ -57,10 +57,24 @@ Full reorthogonalization is available with the `reorthogonalization` option.
 Additional details can be displayed if verbose mode is enabled (verbose > 0).
 Information will be displayed every `verbose` iterations.
 
+GPMR can be warm-started from initial guesses `x0` and `y0` with the method
+
+    (x, y, stats) = gpmr(A, B, b, c, x0, y0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * A. Montoison and D. Orban, [*GPMR: An Iterative Method for Unsymmetric Partitioned Linear Systems*](https://dx.doi.org/10.13140/RG.2.2.24069.68326), Cahier du GERAD G-2021-62, GERAD, Montréal, 2021.
 """
+function gpmr end
+
+function gpmr(A, B, b :: AbstractVector{FC}, c :: AbstractVector{FC}, x0 :: AbstractVector, y0 :: AbstractVector; memory :: Int=20, kwargs...) where FC <: FloatOrComplex
+  solver = GpmrSolver(A, b, memory)
+  gpmr!(solver, A, B, b, c, x0, y0; kwargs...)
+  return (solver.x, solver.y, solver.stats)
+end
+
 function gpmr(A, B, b :: AbstractVector{FC}, c :: AbstractVector{FC}; memory :: Int=20, kwargs...) where FC <: FloatOrComplex
   solver = GpmrSolver(A, b, memory)
   gpmr!(solver, A, B, b, c; kwargs...)
@@ -68,15 +82,25 @@ function gpmr(A, B, b :: AbstractVector{FC}, c :: AbstractVector{FC}; memory :: 
 end
 
 """
-    solver = gpmr!(solver::GpmrSolver, args...; kwargs...)
+    solver = gpmr!(solver::GpmrSolver, A, B, b, c; kwargs...)
+    solver = gpmr!(solver::GpmrSolver, A, B, b, c, x0, y0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`gpmr`](@ref).
+where `kwargs` are keyword arguments of [`gpmr`](@ref).
 
 Note that the `memory` keyword argument is the only exception.
 It's required to create a `GpmrSolver` and can't be changed later.
 
 See [`GpmrSolver`](@ref) for more details about the `solver`.
 """
+function gpmr! end
+
+function gpmr!(solver :: GpmrSolver{T,FC,S}, A, B, b :: AbstractVector{FC}, c :: AbstractVector{FC},
+                x0 :: AbstractVector, y0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0, y0)
+  gpmr!(solver, A, B, b, c; kwargs...)
+  return solver
+end
+
 function gpmr!(solver :: GpmrSolver{T,FC,S}, A, B, b :: AbstractVector{FC}, c :: AbstractVector{FC};
                C=I, D=I, E=I, F=I, atol :: T=√eps(T), rtol :: T=√eps(T),
                gsp :: Bool=false, reorthogonalization :: Bool=false, itmax :: Int=0,

@@ -32,10 +32,24 @@ QMR is used for solving dual system `Aᵀy = c`.
 An option gives the possibility of transferring from the BiLQ point to the
 BiCG point, when it exists. The transfer is based on the residual norm.
 
+BiLQR can be warm-started from initial guesses `x0` and `y0` with the method
+
+    (x, y, stats) = bilqr(A, b, c, x0, y0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * A. Montoison and D. Orban, [*BiLQ: An Iterative Method for Nonsymmetric Linear Systems with a Quasi-Minimum Error Property*](https://doi.org/10.1137/19M1290991), SIAM Journal on Matrix Analysis and Applications, 41(3), pp. 1145--1166, 2020.
 """
+function bilqr end
+
+function bilqr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}, x0 :: AbstractVector, y0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = BilqrSolver(A, b)
+  bilqr!(solver, A, b, c, x0, y0; kwargs...)
+  return (solver.x, solver.y, solver.stats)
+end
+
 function bilqr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = BilqrSolver(A, b)
   bilqr!(solver, A, b, c; kwargs...)
@@ -43,12 +57,22 @@ function bilqr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}; kwargs...) w
 end
 
 """
-    solver = bilqr!(solver::BilqrSolver, args...; kwargs...)
+    solver = bilqr!(solver::BilqrSolver, A, b, c; kwargs...)
+    solver = bilqr!(solver::BilqrSolver, A, b, c, x0, y0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`bilqr`](@ref).
+where `kwargs` are keyword arguments of [`bilqr`](@ref).
 
 See [`BilqrSolver`](@ref) for more details about the `solver`.
 """
+function bilqr! end
+
+function bilqr!(solver :: BilqrSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: AbstractVector{FC},
+                x0 :: AbstractVector, y0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0, y0)
+  bilqr!(solver, A, b, c; kwargs...)
+  return solver
+end
+
 function bilqr!(solver :: BilqrSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: AbstractVector{FC};
                 atol :: T=√eps(T), rtol :: T=√eps(T), transfer_to_bicg :: Bool=true,
                 itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

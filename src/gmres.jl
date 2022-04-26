@@ -32,7 +32,7 @@ Full reorthogonalization is available with the `reorthogonalization` option.
 
 GMRES can be warm-started from an initial guess `x0` with the method
 
-    (x, stats) =  gmres(A, b, x0; kwargs...)
+    (x, stats) = gmres(A, b, x0; kwargs...)
 
 where `kwargs` are the same keyword arguments as above.
 
@@ -67,9 +67,10 @@ See [`GmresSolver`](@ref) for more details about the `solver`.
 """
 function gmres! end
 
-function gmres!(solver :: GmresSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0::AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+function gmres!(solver :: GmresSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
   warm_start!(solver, x0)
-  return gmres!(solver, A, b; kwargs...)
+  gmres!(solver, A, b; kwargs...)
+  return solver
 end
 
 function gmres!(solver :: GmresSolver{T,FC,S}, A, b :: AbstractVector{FC};

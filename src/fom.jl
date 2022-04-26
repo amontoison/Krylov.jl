@@ -30,10 +30,24 @@ This implementation allows a left preconditioner M and a right preconditioner N.
 
 Full reorthogonalization is available with the `reorthogonalization` option.
 
+FOM can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = fom(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * Y. Saad, [*Krylov subspace methods for solving unsymmetric linear systems*](https://doi.org/10.1090/S0025-5718-1981-0616364-6), Mathematics of computation, Vol. 37(155), pp. 105--126, 1981.
 """
+function fom end
+
+function fom(A, b :: AbstractVector{FC}, x0 :: AbstractVector; memory :: Int=20, kwargs...) where FC <: FloatOrComplex
+  solver = FomSolver(A, b, memory)
+  fom!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function fom(A, b :: AbstractVector{FC}; memory :: Int=20, kwargs...) where FC <: FloatOrComplex
   solver = FomSolver(A, b, memory)
   fom!(solver, A, b; kwargs...)
@@ -41,15 +55,24 @@ function fom(A, b :: AbstractVector{FC}; memory :: Int=20, kwargs...) where FC <
 end
 
 """
-    solver = fom!(solver::FomSolver, args...; kwargs...)
+    solver = fom!(solver::FomSolver, A, b; kwargs...)
+    solver = fom!(solver::FomSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`fom`](@ref).
+where `kwargs` are keyword arguments of [`fom`](@ref).
 
 Note that the `memory` keyword argument is the only exception.
 It's required to create a `FomSolver` and can't be changed later.
 
 See [`FomSolver`](@ref) for more details about the `solver`.
 """
+function fom! end
+
+function fom!(solver :: FomSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  fom!(solver, A, b; kwargs...)
+  return solver
+end
+
 function fom!(solver :: FomSolver{T,FC,S}, A, b :: AbstractVector{FC};
               M=I, N=I, atol :: T=√eps(T), rtol :: T=√eps(T),
               reorthogonalization :: Bool=false, itmax :: Int=0,

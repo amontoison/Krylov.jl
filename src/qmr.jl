@@ -34,12 +34,26 @@ QMR is based on the Lanczos biorthogonalization process and requires two initial
 The relation `bᵀc ≠ 0` must be satisfied and by default `c = b`.
 When `A` is symmetric and `b = c`, QMR is equivalent to MINRES.
 
+QMR can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = qmr(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * R. W. Freund and N. M. Nachtigal, [*QMR : a quasi-minimal residual method for non-Hermitian linear systems*](https://doi.org/10.1007/BF01385726), Numerische mathematik, Vol. 60(1), pp. 315--339, 1991.
 * R. W. Freund and N. M. Nachtigal, [*An implementation of the QMR method based on coupled two-term recurrences*](https://doi.org/10.1137/0915022), SIAM Journal on Scientific Computing, Vol. 15(2), pp. 313--337, 1994.
 * A. Montoison and D. Orban, [*BiLQ: An Iterative Method for Nonsymmetric Linear Systems with a Quasi-Minimum Error Property*](https://doi.org/10.1137/19M1290991), SIAM Journal on Matrix Analysis and Applications, 41(3), pp. 1145--1166, 2020.
 """
+function qmr end
+
+function qmr(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = QmrSolver(A, b)
+  qmr!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function qmr(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = QmrSolver(A, b)
   qmr!(solver, A, b; kwargs...)
@@ -47,12 +61,21 @@ function qmr(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
 end
 
 """
-    solver = qmr!(solver::QmrSolver, args...; kwargs...)
+    solver = qmr!(solver::QmrSolver, A, b; kwargs...)
+    solver = qmr!(solver::QmrSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`qmr`](@ref).
+where `kwargs` are keyword arguments of [`qmr`](@ref).
 
 See [`QmrSolver`](@ref) for more details about the `solver`.
 """
+function qmr! end
+
+function qmr!(solver :: QmrSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  qmr!(solver, A, b; kwargs...)
+  return solver
+end
+
 function qmr!(solver :: QmrSolver{T,FC,S}, A, b :: AbstractVector{FC}; c :: AbstractVector{FC}=b,
               atol :: T=√eps(T), rtol :: T=√eps(T),
               itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

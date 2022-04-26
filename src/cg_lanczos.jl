@@ -19,6 +19,10 @@ export cg_lanczos, cg_lanczos!
                             M=I, atol::T=√eps(T), rtol::T=√eps(T), itmax::Int=0,
                             check_curvature::Bool=false, verbose::Int=0, history::Bool=false)
 
+    (x, stats) = cg_lanczos(A, b::AbstractVector{FC}, shifts::AbstractVector{T};
+                            M=I, atol::T=√eps(T), rtol::T=√eps(T), itmax::Int=0,
+                            check_curvature::Bool=false, verbose::Int=0, history::Bool=false)
+
 `T` is an `AbstractFloat` such as `Float32`, `Float64` or `BigFloat`.
 `FC` is `T` or `Complex{T}`.
 
@@ -27,29 +31,79 @@ symmetric linear system
 
     Ax = b
 
+or a family of shifted systems
+
+    (A + αI) x = b  (α = α₁, ..., αₙ)
+
 The method does _not_ abort if A is not definite.
 
 A preconditioner M may be provided in the form of a linear operator and is
 assumed to be hermitian and positive definite.
+
+CG-LANCZOS can be warm-started from an initial guess `x0` with the methods
+
+    (x, stats) = cg_lanczos(A, b, x0; kwargs...)
+    (x, stats) = cg_lanczos(A, b, shifts, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
 
 #### References
 
 * A. Frommer and P. Maass, [*Fast CG-Based Methods for Tikhonov-Phillips Regularization*](https://doi.org/10.1137/S1064827596313310), SIAM Journal on Scientific Computing, 20(5), pp. 1831--1850, 1999.
 * C. C. Paige and M. A. Saunders, [*Solution of Sparse Indefinite Systems of Linear Equations*](https://doi.org/10.1137/0712047), SIAM Journal on Numerical Analysis, 12(4), pp. 617--629, 1975.
 """
+function cg_lanczos end
+
+function cg_lanczos(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = CgLanczosSolver(A, b)
+  cg_lanczos!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function cg_lanczos(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = CgLanczosSolver(A, b)
   cg_lanczos!(solver, A, b; kwargs...)
   return (solver.x, solver.stats)
 end
 
-"""
-    solver = cg_lanczos!(solver::CgLanczosSolver, args...; kwargs...)
+function cg_lanczos(A, b :: AbstractVector{FC}, shifts :: AbstractVector{T}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}}
+  nshifts = length(shifts)
+  solver = CgLanczosShiftSolver(A, b, nshifts)
+  cg_lanczos!(solver, A, b, shifts, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
 
-where `args` and `kwargs` are arguments and keyword arguments of [`cg_lanczos`](@ref) without shifts.
+function cg_lanczos(A, b :: AbstractVector{FC}, shifts :: AbstractVector{T}; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}}
+  nshifts = length(shifts)
+  solver = CgLanczosShiftSolver(A, b, nshifts)
+  cg_lanczos!(solver, A, b, shifts; kwargs...)
+  return (solver.x, solver.stats)
+end
+
+"""
+    solver = cg_lanczos!(solver::CgLanczosSolver, A, b; kwargs...)
+    solver = cg_lanczos!(solver::CgLanczosSolver, A, b, x0; kwargs...)
+
+where `kwargs` are keyword arguments of [`cg_lanczos`](@ref) without shifts.
 
 See [`CgLanczosSolver`](@ref) for more details about the `solver`.
+
+    solver = cg_lanczos!(solver::CgLanczosShiftSolver, A, b, shifts; kwargs...)
+    solver = cg_lanczos!(solver::CgLanczosShiftSolver, A, b, shifts, x0; kwargs...)
+
+where `kwargs` are keyword arguments of [`cg_lanczos`](@ref) with shifts.
+
+See [`CgLanczosShiftSolver`](@ref) for more details about the `solver`.
+
 """
+function cg_lanczos! end
+
+function cg_lanczos!(solver :: CgLanczosSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  cg_lanczos!(solver, A, b; kwargs...)
+  return solver
+end
+
 function cg_lanczos!(solver :: CgLanczosSolver{T,FC,S}, A, b :: AbstractVector{FC};
                      M=I, atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0,
                      check_curvature :: Bool=false, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
@@ -169,39 +223,13 @@ function cg_lanczos!(solver :: CgLanczosSolver{T,FC,S}, A, b :: AbstractVector{F
   return solver
 end
 
-
-"""
-    (x, stats) = cg_lanczos(A, b::AbstractVector{FC}, shifts::AbstractVector{T};
-                            M=I, atol::T=√eps(T), rtol::T=√eps(T), itmax::Int=0,
-                            check_curvature::Bool=false, verbose::Int=0, history::Bool=false)
-
-`T` is an `AbstractFloat` such as `Float32`, `Float64` or `BigFloat`.
-`FC` is `T` or `Complex{T}`.
-
-The Lanczos version of the conjugate gradient method to solve a family
-of shifted systems
-
-    (A + αI) x = b  (α = α₁, ..., αₙ)
-
-The method does _not_ abort if A + αI is not definite.
-
-A preconditioner M may be provided in the form of a linear operator and is
-assumed to be hermitian and positive definite.
-"""
-function cg_lanczos(A, b :: AbstractVector{FC}, shifts :: AbstractVector{T}; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}}
-  nshifts = length(shifts)
-  solver = CgLanczosShiftSolver(A, b, nshifts)
+function cg_lanczos!(solver :: CgLanczosShiftSolver{T,FC,S}, A, b :: AbstractVector{FC}, shifts :: AbstractVector{T},
+                     x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
   cg_lanczos!(solver, A, b, shifts; kwargs...)
-  return (solver.x, solver.stats)
+  return solver
 end
 
-"""
-    solver = cg_lanczos!(solver::CgLanczosShiftSolver, args...; kwargs...)
-
-where `args` and `kwargs` are arguments and keyword arguments of [`cg_lanczos`](@ref) with shifts.
-
-See [`CgLanczosShiftSolver`](@ref) for more details about the `solver`.
-"""
 function cg_lanczos!(solver :: CgLanczosShiftSolver{T,FC,S}, A, b :: AbstractVector{FC}, shifts :: AbstractVector{T};
                      M=I, atol :: T=√eps(T), rtol :: T=√eps(T), itmax :: Int=0,
                      check_curvature :: Bool=false, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

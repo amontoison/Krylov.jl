@@ -31,10 +31,24 @@ USYMQR is used for solving dual system `Aᵀy = c`.
 An option gives the possibility of transferring from the USYMLQ point to the
 USYMCG point, when it exists. The transfer is based on the residual norm.
 
+TriLQR can be warm-started from initial guesses `x0` and `y0` with the method
+
+    (x, y, stats) = trilqr(A, b, c, x0, y0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * A. Montoison and D. Orban, [*BiLQ: An Iterative Method for Nonsymmetric Linear Systems with a Quasi-Minimum Error Property*](https://doi.org/10.1137/19M1290991), SIAM Journal on Matrix Analysis and Applications, 41(3), pp. 1145--1166, 2020.
 """
+function trilqr end
+
+function trilqr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}, x0 :: AbstractVector, y0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = TrilqrSolver(A, b)
+  trilqr!(solver, A, b, c, x0, y0; kwargs...)
+  return (solver.x, solver.y, solver.stats)
+end
+
 function trilqr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = TrilqrSolver(A, b)
   trilqr!(solver, A, b, c; kwargs...)
@@ -42,12 +56,22 @@ function trilqr(A, b :: AbstractVector{FC}, c :: AbstractVector{FC}; kwargs...) 
 end
 
 """
-    solver = trilqr!(solver::TrilqrSolver, args...; kwargs...)
+    solver = trilqr!(solver::TrilqrSolver, A, b, c; kwargs...)
+    solver = trilqr!(solver::TrilqrSolver, A, b, c, x0, y0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`trilqr`](@ref).
+where `kwargs` are keyword arguments of [`trilqr`](@ref).
 
 See [`TrilqrSolver`](@ref) for more details about the `solver`.
 """
+function trilqr! end
+
+function trilqr!(solver :: TrilqrSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: AbstractVector{FC},
+                x0 :: AbstractVector, y0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0, y0)
+  trilqr!(solver, A, b, c; kwargs...)
+  return solver
+end
+
 function trilqr!(solver :: TrilqrSolver{T,FC,S}, A, b :: AbstractVector{FC}, c :: AbstractVector{FC};
                  atol :: T=√eps(T), rtol :: T=√eps(T), transfer_to_usymcg :: Bool=true,
                  itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}

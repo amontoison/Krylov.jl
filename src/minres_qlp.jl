@@ -33,12 +33,26 @@ A preconditioner M may be provided in the form of a linear operator and is
 assumed to be symmetric and positive definite.
 M also indicates the weighted norm in which residuals are measured.
 
+MINRES-QLP can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = minres_qlp(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### References
 
 * S.-C. T. Choi, *Iterative methods for singular linear equations and least-squares problems*, Ph.D. thesis, ICME, Stanford University, 2006.
 * S.-C. T. Choi, C. C. Paige and M. A. Saunders, [*MINRES-QLP: A Krylov subspace method for indefinite or singular symmetric systems*](https://doi.org/10.1137/100787921), SIAM Journal on Scientific Computing, Vol. 33(4), pp. 1810--1836, 2011.
 * S.-C. T. Choi and M. A. Saunders, [*Algorithm 937: MINRES-QLP for symmetric and Hermitian linear equations and least-squares problems*](https://doi.org/10.1145/2527267), ACM Transactions on Mathematical Software, 40(2), pp. 1--12, 2014.
 """
+function minres_qlp end
+
+function minres_qlp(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = MinresQlpSolver(A, b)
+  minres_qlp!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function minres_qlp(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = MinresQlpSolver(A, b)
   minres_qlp!(solver, A, b; kwargs...)
@@ -46,12 +60,21 @@ function minres_qlp(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrCo
 end
 
 """
-    solver = minres_qlp!(solver::MinresQlpSolver, args...; kwargs...)
+    solver = minres_qlp!(solver::MinresQlpSolver, A, b; kwargs...)
+    solver = minres_qlp!(solver::MinresQlpSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`minres_qlp`](@ref).
+where `kwargs` are keyword arguments of [`minres_qlp`](@ref).
 
 See [`MinresQlpSolver`](@ref) for more details about the `solver`.
 """
+function minres_qlp! end
+
+function minres_qlp!(solver :: MinresQlpSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  minres_qlp!(solver, A, b; kwargs...)
+  return solver
+end
+
 function minres_qlp!(solver :: MinresQlpSolver{T,FC,S}, A, b :: AbstractVector{FC};
                      M=I, atol :: T=√eps(T), rtol :: T=√eps(T), ctol :: T=√eps(T),
                      λ ::T=zero(T), itmax :: Int=0, restart :: Bool=false,

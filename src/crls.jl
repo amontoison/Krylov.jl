@@ -44,10 +44,24 @@ CRLS produces monotonic residuals ‖r‖₂ and optimality residuals ‖Aᵀr�
 It is formally equivalent to LSMR, though can be substantially less accurate,
 but simpler to implement.
 
+CRLS can be warm-started from an initial guess `x0` with the method
+
+    (x, stats) = crls(A, b, x0; kwargs...)
+
+where `kwargs` are the same keyword arguments as above.
+
 #### Reference
 
 * D. C.-L. Fong, *Minimum-Residual Methods for Sparse, Least-Squares using Golubg-Kahan Bidiagonalization*, Ph.D. Thesis, Stanford University, 2011.
 """
+function crls end
+
+function crls(A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where FC <: FloatOrComplex
+  solver = CrlsSolver(A, b)
+  crls!(solver, A, b, x0; kwargs...)
+  return (solver.x, solver.stats)
+end
+
 function crls(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
   solver = CrlsSolver(A, b)
   crls!(solver, A, b; kwargs...)
@@ -55,12 +69,21 @@ function crls(A, b :: AbstractVector{FC}; kwargs...) where FC <: FloatOrComplex
 end
 
 """
-    solver = crls!(solver::CrlsSolver, args...; kwargs...)
+    solver = crls!(solver::CrlsSolver, A, b; kwargs...)
+    solver = crls!(solver::CrlsSolver, A, b, x0; kwargs...)
 
-where `args` and `kwargs` are arguments and keyword arguments of [`crls`](@ref).
+where `kwargs` are keyword arguments of [`crls`](@ref).
 
 See [`CrlsSolver`](@ref) for more details about the `solver`.
 """
+function crls! end
+
+function crls!(solver :: CrlsSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: AbstractVector; kwargs...) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
+  warm_start!(solver, x0)
+  crls!(solver, A, b; kwargs...)
+  return solver
+end
+
 function crls!(solver :: CrlsSolver{T,FC,S}, A, b :: AbstractVector{FC};
                M=I, λ :: T=zero(T), atol :: T=√eps(T), rtol :: T=√eps(T),
                radius :: T=zero(T), itmax :: Int=0, verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
