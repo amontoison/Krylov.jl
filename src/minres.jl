@@ -113,10 +113,10 @@ function minres!(solver :: MinresSolver{T,FC,S}, A, b :: AbstractVector{FC};
   ktypeof(b) == S || error("ktypeof(b) ≠ $S")
 
   # Set up workspace.
-  allocate_if(!MisI, solver, :v , S, n)
+  allocate_if(!MisI, solver, :v, S, n)
   Δx, x, r1, r2, w1, w2, y = solver.Δx, solver.x, solver.r1, solver.r2, solver.w1, solver.w2, solver.y
-  warm_start = solver.warm_start
   err_vec, stats = solver.err_vec, solver.stats
+  warm_start = solver.warm_start
   rNorms, ArNorms, Aconds = stats.residuals, stats.Aresiduals, stats.Acond
   reset!(stats)
   v = MisI ? r2 : solver.v
@@ -330,12 +330,12 @@ function minres!(solver :: MinresSolver{T,FC,S}, A, b :: AbstractVector{FC};
 
   # Update x
   warm_start && @kaxpy!(n, one(FC), Δx, x)
+  solver.warm_start = false
 
   # Update stats
   stats.niter = iter
   stats.solved = solved
   stats.inconsistent = !zero_resid
   stats.status = status
-  solver.warm_start = false
   return solver
 end
