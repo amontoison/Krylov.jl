@@ -18,7 +18,7 @@ export cg, cg!
 
 """
     (x, stats) = cg(A, b::AbstractVector{FC};
-                    M=I, atol::T=√eps(T), rtol::T=√eps(T), restart::Bool=false,
+                    M=I, atol::T=√eps(T), rtol::T=√eps(T),
                     itmax::Int=0, radius::T=zero(T), linesearch::Bool=false,
                     verbose::Int=0, history::Bool=false)
 
@@ -77,7 +77,7 @@ function cg!(solver :: CgSolver{T,FC,S}, A, b :: AbstractVector{FC}, x0 :: Abstr
 end
 
 function cg!(solver :: CgSolver{T,FC,S}, A, b :: AbstractVector{FC};
-             M=I, atol :: T=√eps(T), rtol :: T=√eps(T), restart :: Bool=false,
+             M=I, atol :: T=√eps(T), rtol :: T=√eps(T),
              itmax :: Int=0, radius :: T=zero(T), linesearch :: Bool=false,
              verbose :: Int=0, history :: Bool=false) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: DenseVector{FC}}
 
@@ -96,16 +96,16 @@ function cg!(solver :: CgSolver{T,FC,S}, A, b :: AbstractVector{FC};
   ktypeof(b) == S || error("ktypeof(b) ≠ $S")
 
   # Set up workspace.
-  allocate_if(!MisI  , solver, :z , S, n)
-  allocate_if(restart, solver, :Δx, S, n)
+  allocate_if(!MisI, solver, :z, S, n)
   Δx, x, r, p, Ap, stats = solver.Δx, solver.x, solver.r, solver.p, solver.Ap, solver.stats
+  warm_start = solver.warm_start
   rNorms = stats.residuals
   reset!(stats)
   z = MisI ? r : solver.z
 
-  restart && (Δx .= x)
+  warm_start && (Δx .= x)
   x .= zero(FC)
-  if restart
+  if warm_start
     mul!(r, A, Δx)
     @kaxpby!(n, one(FC), b, -one(FC), r)
   else
@@ -120,6 +120,7 @@ function cg!(solver :: CgSolver{T,FC,S}, A, b :: AbstractVector{FC};
     stats.niter = 0
     stats.solved, stats.inconsistent = true, false
     stats.status = "x = 0 is a zero-residual solution"
+    solver.warm_start = false
     return solver
   end
 
@@ -199,7 +200,8 @@ function cg!(solver :: CgSolver{T,FC,S}, A, b :: AbstractVector{FC};
   tired && (status = "maximum number of iterations exceeded")
 
   # Update x
-  restart && @kaxpy!(n, one(FC), Δx, x)
+  warm_start && @kaxpy!(n, one(FC), Δx, x)
+  solver.warm_start = false
 
   # Update stats
   stats.niter = iter
