@@ -21,6 +21,7 @@ makedocs(
                                 "Saddle-point and symmetric quasi-definite systems" => "solvers/sp_sqd.md",
                                 "Generalized saddle-point and unsymmetric partitioned systems" => "solvers/gsp.md"],
            "In-place methods" => "inplace.md",
+           "Krylov processes" => "processes.md",
            "GPU support" => "gpu.md",
            "Warm start" => "warm_start.md",
            "Factorization-free operators" => "factorization-free.md",
