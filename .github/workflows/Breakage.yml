@@ -13,13 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         pkg: [
-          "JuliaSmoothOptimizers/CaNNOLeS.jl",
-          "JuliaSmoothOptimizers/DCISolver.jl",
-          "JuliaSmoothOptimizers/FletcherPenaltySolver.jl",
-          "JuliaSmoothOptimizers/JSOSolvers.jl",
           "JuliaSmoothOptimizers/LLSModels.jl",
-          "JuliaSmoothOptimizers/Percival.jl",
-          "JuliaSmoothOptimizers/RipQP.jl"
         ]
         pkgversion: [latest, stable]
 
