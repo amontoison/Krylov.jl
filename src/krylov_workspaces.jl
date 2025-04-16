@@ -3,7 +3,7 @@ CgLanczosShiftWorkspace, MinresQlpWorkspace, DqgmresWorkspace, DiomWorkspace, Us
 UsymqrWorkspace, TricgWorkspace, TrimrWorkspace, TrilqrWorkspace, CgsWorkspace, BicgstabWorkspace,
 BilqWorkspace, QmrWorkspace, BilqrWorkspace, CglsWorkspace, CglsLanczosShiftWorkspace, CrlsWorkspace, CgneWorkspace,
 CrmrWorkspace, LslqWorkspace, LsqrWorkspace, LsmrWorkspace, LnlqWorkspace, CraigWorkspace, CraigmrWorkspace,
-GmresWorkspace, FomWorkspace, GpmrWorkspace, FgmresWorkspace, CarWorkspace, MinaresWorkspace
+GmresWorkspace, FomWorkspace, GpmrWorkspace, UsymlqrWorkspace, FgmresWorkspace, CarWorkspace, MinaresWorkspace
 
 export solution, nsolution, statistics, issolved, issolved_primal, issolved_dual,
 niterations, Aprod, Atprod, Bprod, warm_start!
@@ -2689,6 +2689,100 @@ function GpmrWorkspace(A, b; memory::Integer = 20)
 end
 
 """
+Workspace for the in-place method [`usymlqr!`](@ref).
+
+The following outer constructors can be used to initialize this workspace:
+
+    workspace = UsymlqrWorkspace(m, n, S)
+    workspace = UsymlqrWorkspace(A, b)
+    workspace = UsymlqrWorkspace(kc::KrylovConstructor)
+"""
+mutable struct UsymlqrWorkspace{T,FC,S} <: KrylovSolver{T,FC,S}
+  m          :: Int
+  n          :: Int
+  r          :: S
+  x          :: S
+  y          :: S
+  z          :: S
+  M⁻¹uₖ₋₁    :: S
+  M⁻¹uₖ      :: S
+  N⁻¹vₖ₋₁    :: S
+  N⁻¹vₖ      :: S
+  p          :: S
+  q          :: S
+  d̅          :: S
+  wₖ₋₂       :: S
+  wₖ₋₁       :: S
+  Δx         :: S
+  Δy         :: S
+  uₖ         :: S
+  vₖ         :: S
+  warm_start :: Bool
+  stats      :: SimpleStats{T}
+end
+
+function GpmrWorkspace(kc::KrylovConstructor)
+  S  = typeof(kc.vm)
+  FC = eltype(S)
+  T  = real(FC)
+  m  = length(kc.vm)
+  n  = length(kc.vn)
+  r       = similar(kc.vm)
+  x       = similar(kc.vn)
+  y       = similar(kc.vm)
+  z       = similar(kc.vn)
+  M⁻¹uₖ₋₁ = similar(kc.vm)
+  M⁻¹uₖ   = similar(kc.vm)
+  N⁻¹vₖ₋₁ = similar(kc.vn)
+  N⁻¹vₖ   = similar(kc.vn)
+  q       = similar(kc.vm)
+  p       = similar(kc.vn)
+  d̅       = similar(kc.vm)
+  wₖ₋₂    = similar(kc.vn)
+  wₖ₋₁    = similar(kc.vn)
+  Δx      = similar(kc.vn_empty)
+  Δy      = similar(kc.vm_empty)
+  uₖ      = similar(kc.vm_empty)
+  vₖ      = similar(kc.vn_empty)
+  stats = SimpleStats(0, false, false, false, T[], T[], T[], 0.0, "unknown")
+  workspace = UsymlqrWorkspace{T,FC,S}(m, n, r, x, y, z, M⁻¹uₖ₋₁, M⁻¹uₖ, N⁻¹vₖ₋₁, N⁻¹vₖ, q, p, d̅, wₖ₋₂, wₖ₋₁, Δx, Δy, uₖ, vₖ, false, stats)
+  return workspace
+  return workspace
+end
+
+function UsymlqrWorkspace(m, n, S)
+  FC      = eltype(S)
+  T       = real(FC)
+  r       = S(undef, m)
+  x       = S(undef, n)
+  y       = S(undef, m)
+  z       = S(undef, n)
+  M⁻¹uₖ₋₁ = S(undef, m)
+  M⁻¹uₖ   = S(undef, m)
+  N⁻¹vₖ₋₁ = S(undef, n)
+  N⁻¹vₖ   = S(undef, n)
+  q       = S(undef, m)
+  p       = S(undef, n)
+  d̅       = S(undef, m)
+  wₖ₋₂    = S(undef, n)
+  wₖ₋₁    = S(undef, n)
+  Δx      = S(undef, 0)
+  Δy      = S(undef, 0)
+  uₖ      = S(undef, 0)
+  vₖ      = S(undef, 0)
+  S = isconcretetype(S) ? S : typeof(x)
+  stats = SimpleStats(0, false, false, false, T[], T[], T[], 0.0, "unknown")
+  workspace = UsymlqrWorkspace{T,FC,S}(m, n, r, x, y, z, M⁻¹uₖ₋₁, M⁻¹uₖ, N⁻¹vₖ₋₁, N⁻¹vₖ, q, p, d̅, wₖ₋₂, wₖ₋₁, Δx, Δy, uₖ, vₖ, false, stats)
+  return workspace
+end
+
+function UsymlqrWorkspace(A, b)
+  m, n = size(A)
+  S = ktypeof(b)
+  UsymlqrWorkspace(m, n, S)
+end
+
+"""
     solution(workspace)
 
 Return the solution(s) stored in the `workspace`.
@@ -2789,6 +2883,7 @@ for (KS, fun, nsol, nA, nAt, warm_start) in [
   (:FgmresWorkspace   , :fgmres!    , 1, 1, 0, true )
   (:FomWorkspace      , :fom!       , 1, 1, 0, true )
   (:GpmrWorkspace     , :gpmr!      , 2, 1, 0, true )
+  (:UsymlqrWorkspace  , :usymlqr!   , 2, 1, 1, true )
   (:CgLanczosShiftWorkspace  , :cg_lanczos_shift!  , 1, 1, 0, false)
   (:CglsLanczosShiftWorkspace, :cgls_lanczos_shift!, 1, 1, 1, false)
 ]
@@ -2820,7 +2915,7 @@ for (KS, fun, nsol, nA, nAt, warm_start) in [
       issolved(workspace :: $KS) = workspace.stats.solved
     end
     if $warm_start
-      if $KS in (BilqrWorkspace, TrilqrWorkspace, TricgWorkspace, TrimrWorkspace, GpmrWorkspace)
+      if $KS in (BilqrWorkspace, TrilqrWorkspace, TricgWorkspace, TrimrWorkspace, UsymlqrSolver, GpmrWorkspace)
         function warm_start!(workspace :: $KS, x0, y0)
           length(x0) == workspace.n || error("x0 should have size $n")
           length(y0) == workspace.m || error("y0 should have size $m")
