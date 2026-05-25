@@ -113,7 +113,17 @@ jobs:
         run: julia --startup-file=no --project=. interfaces/C/scripts/generate_header.jl
 
       # -----------------------------------------------------------------------
-      # Build and run the C example
+      # Run the Julia test suite (all 34 solvers × 4 precisions via ccall)
+      # -----------------------------------------------------------------------
+      - name: Run Julia tests
+        shell: bash
+        env:
+          LIBKRYLOV_PATH: ${{ github.workspace }}/interfaces/C/build/${{ matrix.libdir }}/${{ matrix.lib }}
+        run: |
+          julia --startup-file=no --project=. interfaces/C/test/test_ckrylov.jl
+
+      # -----------------------------------------------------------------------
+      # Build and run the C smoke test (basic_cg example)
       # -----------------------------------------------------------------------
       - name: Build C example
         shell: bash
@@ -129,7 +139,6 @@ jobs:
       - name: Run C example
         shell: bash
         run: |
-          # On Windows the DLL must be on PATH (no rpath)
           export PATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}:$PATH"
           actual=$(interfaces/C/build/basic_cg)
           echo "$actual"
@@ -137,7 +146,7 @@ jobs:
           echo "$actual" | grep -q "x = \[ 1.00  1.00  1.00  1.00  1.00 \]"
 
       # -----------------------------------------------------------------------
-      # Build and run the Fortran example
+      # Build and run the Fortran smoke test (basic_cg example)
       # -----------------------------------------------------------------------
       - name: Build Fortran example
         shell: bash
@@ -146,7 +155,6 @@ jobs:
           LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
           RPATH="${{ matrix.rpath }}"
           RPATH="${RPATH/LIBPATH/$LIBPATH}"
-          # gfortran resolves `include` relative to the source file location
           gfortran -o interfaces/Fortran/build/basic_cg \
               interfaces/Fortran/examples/basic_cg.f90 \
               "$LIBPATH/${{ matrix.lib }}" \

@@ -2,6 +2,7 @@ module Krylov
 
 using LinearAlgebra, SparseArrays, Printf
 import LinearAlgebra.BLAS: BlasInt, @blasfunc, libblastrampoline
+using Quaternions
 
 include("krylov_stats.jl")
 
