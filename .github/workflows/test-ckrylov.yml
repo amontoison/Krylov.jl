@@ -30,8 +30,22 @@ jobs:
             libdir:  lib
             rpath:   -Wl,-rpath,LIBPATH
 
+          - label:   linux-aarch64
+            runner:  ubuntu-24.04-arm
+            juliac:  juliac
+            lib:     libkrylov.so
+            libdir:  lib
+            rpath:   -Wl,-rpath,LIBPATH
+
           - label:   macos-arm64
             runner:  macos-latest
+            juliac:  juliac
+            lib:     libkrylov.dylib
+            libdir:  lib
+            rpath:   -Wl,-rpath,LIBPATH
+
+          - label:   macos-x86_64
+            runner:  macos-15-intel
             juliac:  juliac
             lib:     libkrylov.dylib
             libdir:  lib
