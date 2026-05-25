@@ -61,7 +61,7 @@ jobs:
       - name: Install JuliaC.jl
         shell: bash
         run: |
-          julia --startup-file=no -e "import Pkg; Pkg.Apps.add(\"JuliaC\")"
+          julia --startup-file=no -e "import Pkg; Pkg.Registry.update(); Pkg.Apps.add(\"JuliaC\")"
           echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
 
       # -----------------------------------------------------------------------
