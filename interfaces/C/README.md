@@ -21,7 +21,7 @@ All commands run from the **root of the Krylov.jl repository**.
 
 ```bash
 # Install JuliaC.jl once (Julia app — installs juliac into ~/.julia/bin)
-julia -e 'import Pkg; Pkg.Apps.add("JuliaC")'
+julia -e 'import Pkg; Pkg.Apps.add(url="https://github.com/JuliaLang/JuliaC.jl", rev="v0.3.2")'
 export PATH="$HOME/.julia/bin:$PATH"   # add to ~/.bashrc to make permanent
 
 # Build the bundle (library + embedded Julia runtime)
