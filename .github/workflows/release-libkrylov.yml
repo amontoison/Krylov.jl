@@ -64,9 +64,12 @@ jobs:
           julia --startup-file=no -e "
             import Pkg
             Pkg.Registry.add(\"General\")
-            Pkg.Apps.add(url=\"https://github.com/JuliaLang/JuliaC.jl\", rev=\"v0.3.2\")
+            Pkg.Apps.add(\"JuliaC\")
           "
-          echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
+
+      - name: Add juliac to PATH
+        shell: bash
+        run: echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
 
       # -----------------------------------------------------------------------
       # Instantiate the Krylov.jl project (downloads dependencies)
@@ -99,14 +102,14 @@ jobs:
 
       - name: Build libkrylov (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash
         run: |
-          juliac `
-            --project . `
-            --compile-ccallable `
-            --trim=safe `
-            --bundle interfaces/C/build `
-            --output-lib "interfaces/C/build/bin/${{ matrix.lib }}" `
+          juliac \
+            --project . \
+            --compile-ccallable \
+            --trim=safe \
+            --bundle interfaces/C/build \
+            --output-lib "interfaces/C/build/bin/${{ matrix.lib }}" \
             interfaces/C/src/CKrylov.jl
 
       # -----------------------------------------------------------------------
@@ -133,8 +136,8 @@ jobs:
 
       - name: Package (Windows — zip)
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: Compress-Archive -Path interfaces/C/build/* -DestinationPath "${{ matrix.archive }}"
+        shell: bash
+        run: cd interfaces/C/build && zip -r "../../../${{ matrix.archive }}" .
 
       # -----------------------------------------------------------------------
       # Upload asset to the GitHub Release that TagBot already created.
