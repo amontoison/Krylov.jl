@@ -69,7 +69,10 @@ jobs:
 
       - name: Add juliac to PATH
         shell: bash
-        run: echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
+        run: |
+          JULIA_BIN=$(julia --startup-file=no -e "print(joinpath(DEPOT_PATH[1], \"bin\"))")
+          echo "Julia apps dir: $JULIA_BIN"
+          echo "$JULIA_BIN" >> "$GITHUB_PATH"
 
       # -----------------------------------------------------------------------
       # Instantiate the Krylov.jl project (downloads dependencies)
