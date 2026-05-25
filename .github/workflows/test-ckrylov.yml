@@ -23,11 +23,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label:  linux-x86_64
-            runner: ubuntu-latest
+          - label:   linux-x86_64
+            runner:  ubuntu-latest
+            juliac:  juliac
+            lib:     libkrylov.so
+            libdir:  lib
+            rpath:   -Wl,-rpath,LIBPATH
 
-          - label:  macos-arm64
-            runner: macos-latest
+          - label:   macos-arm64
+            runner:  macos-latest
+            juliac:  juliac
+            lib:     libkrylov.dylib
+            libdir:  lib
+            rpath:   -Wl,-rpath,LIBPATH
+
+          - label:   windows-x86_64
+            runner:  windows-latest
+            juliac:  juliac.bat
+            lib:     krylov.dll
+            libdir:  bin
+            rpath:   ""
 
     steps:
       - uses: actions/checkout@v4
@@ -67,12 +82,13 @@ jobs:
       - name: Build libkrylov
         shell: bash
         run: |
-          mkdir -p interfaces/C/build/lib
-          juliac \
+          OUTLIB="interfaces/C/build/${{ matrix.libdir }}/${{ matrix.lib }}"
+          mkdir -p "$(dirname "$OUTLIB")"
+          ${{ matrix.juliac }} \
             --project . \
             --compile-ccallable \
             --trim=safe \
-            --output-lib interfaces/C/build/lib/libkrylov.so \
+            --output-lib "$OUTLIB" \
             interfaces/C/src/CKrylov.jl
 
       # -----------------------------------------------------------------------
@@ -88,14 +104,19 @@ jobs:
       - name: Build C example
         shell: bash
         run: |
+          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          RPATH="${{ matrix.rpath }}"
+          RPATH="${RPATH/LIBPATH/$LIBPATH}"
           gcc -o interfaces/C/build/basic_cg interfaces/C/examples/basic_cg.c \
               -I interfaces/C/include \
-              interfaces/C/build/lib/libkrylov.so \
-              -Wl,-rpath,$(pwd)/interfaces/C/build/lib
+              "$LIBPATH/${{ matrix.lib }}" \
+              $RPATH
 
       - name: Run C example
         shell: bash
         run: |
+          # On Windows the DLL must be on PATH (no rpath)
+          export PATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}:$PATH"
           actual=$(interfaces/C/build/basic_cg)
           echo "$actual"
           echo "$actual" | grep -q "Solved: yes"
@@ -108,15 +129,19 @@ jobs:
         shell: bash
         run: |
           mkdir -p interfaces/Fortran/build
+          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          RPATH="${{ matrix.rpath }}"
+          RPATH="${RPATH/LIBPATH/$LIBPATH}"
           # gfortran resolves `include` relative to the source file location
           gfortran -o interfaces/Fortran/build/basic_cg \
               interfaces/Fortran/examples/basic_cg.f90 \
-              interfaces/C/build/lib/libkrylov.so \
-              -Wl,-rpath,$(pwd)/interfaces/C/build/lib
+              "$LIBPATH/${{ matrix.lib }}" \
+              $RPATH
 
       - name: Run Fortran example
         shell: bash
         run: |
+          export PATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}:$PATH"
           actual=$(interfaces/Fortran/build/basic_cg)
           echo "$actual"
           echo "$actual" | grep -q "Solved: T"
