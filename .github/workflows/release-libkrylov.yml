@@ -89,38 +89,26 @@ jobs:
       #   │   ├── libkrylov.so   (or .dylib / .dll on Windows: bin/)
       #   │   └── julia/         (Julia runtime — makes the lib self-contained)
       #   └── include/           (added by us in the next step)
+      #
+      # On Windows, Julia apps install as .bat files; on Unix, plain binaries.
+      # The output goes to bin/ on Windows (DLL convention) and lib/ elsewhere.
       # -----------------------------------------------------------------------
-      - name: Build libkrylov (Unix)
-        if: runner.os != 'Windows'
+      - name: Build libkrylov
         shell: bash
         run: |
-          juliac \
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            JULIAC=juliac.bat
+            OUTDIR=interfaces/C/build/bin
+          else
+            JULIAC=juliac
+            OUTDIR=interfaces/C/build/lib
+          fi
+          $JULIAC \
             --project . \
             --compile-ccallable \
             --trim=safe \
             --bundle interfaces/C/build \
-            --output-lib "interfaces/C/build/lib/${{ matrix.lib }}" \
-            interfaces/C/src/CKrylov.jl
-
-      - name: Debug juliac location (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $juliaDir = Join-Path $env:USERPROFILE ".julia"
-          Write-Host "DEPOT_PATH[1]: $juliaDir"
-          Get-ChildItem -Path $juliaDir -Recurse -Filter "juliac*" -ErrorAction SilentlyContinue | Select-Object FullName
-
-      - name: Build libkrylov (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $juliac = Join-Path $env:USERPROFILE ".julia" "bin" "juliac.cmd"
-          & $juliac `
-            --project . `
-            --compile-ccallable `
-            --trim=safe `
-            --bundle interfaces/C/build `
-            --output-lib "interfaces/C/build/bin/${{ matrix.lib }}" `
+            --output-lib "$OUTDIR/${{ matrix.lib }}" \
             interfaces/C/src/CKrylov.jl
 
       # -----------------------------------------------------------------------
