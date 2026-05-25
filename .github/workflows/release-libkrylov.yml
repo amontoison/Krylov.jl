@@ -102,6 +102,14 @@ jobs:
             --output-lib "interfaces/C/build/lib/${{ matrix.lib }}" \
             interfaces/C/src/CKrylov.jl
 
+      - name: Debug juliac location (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $juliaDir = Join-Path $env:USERPROFILE ".julia"
+          Write-Host "DEPOT_PATH[1]: $juliaDir"
+          Get-ChildItem -Path $juliaDir -Recurse -Filter "juliac*" -ErrorAction SilentlyContinue | Select-Object FullName
+
       - name: Build libkrylov (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
