@@ -387,6 +387,7 @@ kscalcopy!(n :: Integer, y :: AbstractVector{Quaternion{T}}, s :: T, x :: Abstra
 kdivcopy!(n :: Integer, y :: AbstractVector{T}, x :: AbstractVector{T}, s :: T) where T <: FloatOrComplex = (y .= x ./ s)
 kdivcopy!(n :: Integer, y :: AbstractVector{Complex{T}}, x :: AbstractVector{Complex{T}}, s :: T) where T <: AbstractFloat = (y .= x ./ s)
 kdivcopy!(n :: Integer, y :: AbstractVector{Quaternion{T}}, x :: AbstractVector{Quaternion{T}}, s :: T) where T <: AbstractFloat = (y .= inv(s) .* x)
+kdivcopy!(n :: Integer, y :: AbstractVector{Quaternion{T}}, x :: AbstractVector{Quaternion{T}}, s :: Quaternion{T}) where T <: AbstractFloat = (y .= inv(s) .* x)
 
 kaxpy!(n :: Integer, s :: T, x :: Vector{T}, y :: Vector{T}) where T <: BLAS.BlasFloat = BLAS.axpy!(n, s, x, 1, y, 1)
 kaxpy!(n :: Integer, s :: T, x :: AbstractVector{T}, y :: AbstractVector{T}) where T <: FloatOrComplex = axpy!(s, x, y)
