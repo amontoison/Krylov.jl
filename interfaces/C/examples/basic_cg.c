@@ -1,0 +1,124 @@
+/*
+ * basic_cg.c — minimal example: solve a 5x5 SPD system with CG.
+ *
+ * A = tridiag(-1, 2, -1),  b = [1, 0, 0, 0, 1]^T
+ *
+ * Compile (after building libCKrylov.so with CMake):
+ *
+ *   gcc -o basic_cg basic_cg.c -I../include -L../build -lkrylov -Wl,-rpath,../build
+ *
+ * Expected output:
+ *   Solved: yes   niter: 3   time: ...
+ *   x = [ 1.00  1.00  1.00  1.00  1.00 ]
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "krylov.h"
+
+/* -------------------------------------------------------------------------
+ * Problem data
+ * ------------------------------------------------------------------------- */
+
+#define N 5
+
+/* Tridiagonal matrix stored as three diagonals for simplicity. */
+typedef struct {
+  int    n;
+  double diag[N];   /* main diagonal */
+  double off[N-1];  /* sub/super diagonal */
+} TriDiag;
+
+/* Matvec callback:  y = A * x  */
+static void matvec_A(const void *xv, void *yv, void *userdata)
+{
+  const double *x  = (const double *)xv;
+  double       *y  = (double *)yv;
+  const TriDiag *A = (const TriDiag *)userdata;
+  int n = A->n;
+
+  for (int i = 0; i < n; i++) {
+    y[i] = A->diag[i] * x[i];
+    if (i > 0)   y[i] += A->off[i-1] * x[i-1];
+    if (i < n-1) y[i] += A->off[i]   * x[i+1];
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * main
+ * ------------------------------------------------------------------------- */
+
+int main(void)
+{
+  /* Build A = tridiag(-1, 2, -1) */
+  TriDiag A;
+  A.n = N;
+  for (int i = 0; i < N;   i++) A.diag[i] = 2.0;
+  for (int i = 0; i < N-1; i++) A.off[i]  = -1.0;
+
+  /* Right-hand side */
+  double b[N] = {1.0, 0.0, 0.0, 0.0, 1.0};
+
+  /* Solution buffer */
+  double x[N];
+
+  /* -----------------------------------------------------------------------
+   * Create workspace for CG, double precision, CPU
+   * --------------------------------------------------------------------- */
+  void *ws = NULL;
+  int ret = krylov_workspace_create("cg", N, N,
+                                    KRYLOV_FLOAT64, KRYLOV_CPU,
+                                    &ws);
+  if (ret != 0) {
+    fprintf(stderr, "krylov_workspace_create failed (%d)\n", ret);
+    return 1;
+  }
+
+  /* -----------------------------------------------------------------------
+   * Solve
+   * --------------------------------------------------------------------- */
+  ret = krylov_solve(ws,
+                     matvec_A,   /* y = A*x */
+                     NULL,       /* y = A'*x  (CG doesn't need it) */
+                     NULL,       /* no preconditioner */
+                     b,          /* right-hand side */
+                     &A,         /* userdata forwarded to matvec_A */
+                     1e-10,      /* atol */
+                     1e-10,      /* rtol */
+                     0,          /* itmax: use solver default */
+                     0);         /* verbose: silent */
+  if (ret != 0) {
+    fprintf(stderr, "krylov_solve failed (%d)\n", ret);
+    krylov_workspace_free(ws);
+    return 1;
+  }
+
+  /* -----------------------------------------------------------------------
+   * Retrieve results
+   * --------------------------------------------------------------------- */
+  ret = krylov_get_x(ws, x, N);
+  if (ret != 0) {
+    fprintf(stderr, "krylov_get_x failed (%d)\n", ret);
+    krylov_workspace_free(ws);
+    return 1;
+  }
+
+  printf("Solved: %s   niter: %d   time: %.3e s\n",
+         krylov_is_solved(ws) ? "yes" : "no",
+         krylov_niter(ws),
+         krylov_elapsed_time(ws));
+
+  printf("x = [");
+  for (int i = 0; i < N; i++)
+    printf(" %.2f", x[i]);
+  printf(" ]\n");
+
+  /* -----------------------------------------------------------------------
+   * Free workspace
+   * --------------------------------------------------------------------- */
+  krylov_workspace_free(ws);
+
+  return 0;
+}
