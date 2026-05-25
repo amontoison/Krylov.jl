@@ -71,7 +71,6 @@ jobs:
         shell: bash
         run: |
           JULIA_BIN=$(julia --startup-file=no -e "print(joinpath(DEPOT_PATH[1], \"bin\"))")
-          echo "Julia apps dir: $JULIA_BIN"
           echo "$JULIA_BIN" >> "$GITHUB_PATH"
 
       # -----------------------------------------------------------------------
@@ -105,14 +104,15 @@ jobs:
 
       - name: Build libkrylov (Windows)
         if: runner.os == 'Windows'
-        shell: bash
+        shell: pwsh
         run: |
-          juliac \
-            --project . \
-            --compile-ccallable \
-            --trim=safe \
-            --bundle interfaces/C/build \
-            --output-lib "interfaces/C/build/bin/${{ matrix.lib }}" \
+          $juliac = Join-Path $env:USERPROFILE ".julia" "bin" "juliac.cmd"
+          & $juliac `
+            --project . `
+            --compile-ccallable `
+            --trim=safe `
+            --bundle interfaces/C/build `
+            --output-lib "interfaces/C/build/bin/${{ matrix.lib }}" `
             interfaces/C/src/CKrylov.jl
 
       # -----------------------------------------------------------------------
