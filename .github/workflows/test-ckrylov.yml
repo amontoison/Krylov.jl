@@ -40,7 +40,7 @@ jobs:
           - label:   windows-x86_64
             runner:  windows-latest
             juliac:  juliac.bat
-            lib:     krylov.dll
+            lib:     libkrylov.dll
             libdir:  bin
             rpath:   ""
 

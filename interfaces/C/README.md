@@ -57,7 +57,7 @@ interfaces/C/build/
     └── krylov.f90
 ```
 
-> **Windows:** use `--output-lib interfaces/C/build/bin/krylov.dll`; the bundle lands in `build/bin/`.  
+> **Windows:** use `--output-lib interfaces/C/build/bin/libkrylov.dll`; the bundle lands in `build/bin/`.  
 > **macOS:** replace `.so` with `.dylib` and use `-Wl,-rpath,@loader_path/../lib/julia`.
 
 ### Without CMake, without bundle
