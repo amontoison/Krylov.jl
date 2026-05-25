@@ -7,7 +7,7 @@ const kstdout = Core.stdout
     FloatOrComplex{T}
 Union type of `T` and `Complex{T}` where T is an `AbstractFloat`.
 """
-const FloatOrComplex{T} = Union{T, Complex{T}, Quaternion{T}} where T <: AbstractFloat
+const FloatOrComplex{T} = Union{T, Complex{T}} where T <: AbstractFloat
 
 """
     (c, s, ρ) = sym_givens(a, b)
@@ -51,7 +51,7 @@ function sym_givens(a :: T, b :: T) where T <: AbstractFloat
 end
 
 """
-Numerically stable Givens reflection.
+Numerically stable symmetric Givens reflection.
 Given `a` and `b` complexes, return `(c, s, ρ)` with
 c real and (s, ρ) complexes such that
 
@@ -95,55 +95,6 @@ end
 
 sym_givens(a :: Complex{T}, b :: T) where T <: AbstractFloat = sym_givens(a, Complex{T}(b))
 sym_givens(a :: T, b :: Complex{T}) where T <: AbstractFloat = sym_givens(Complex{T}(a), b)
-
-using Quaternions
-
-"""
-Numerically stable Givens reflection for quaternions.
-Given quaternions a and b, return (c, s, ρ) such that
-
-    [ c   s ] [ a ] = [ ρ ]
-    [ s̅  -c ] [ b ] = [ 0 ],
-
-where:
-  - c is real
-  - s and ρ are quaternions
-"""
-function sym_givens(a::Quaternion{T}, b::Quaternion{T}) where T <: AbstractFloat
-
-  abs_a = abs(a)
-  abs_b = abs(b)
-
-  if iszero(abs_b)
-    c = one(T)
-    s = zero(Quaternion{T})
-    ρ = a
-  elseif iszero(abs_a)
-    c = zero(T)
-    s = one(Quaternion{T})
-    ρ = b
-  elseif abs_b > abs_a
-    t = abs_a / abs_b
-    cs = one(T) / sqrt(one(T) + t*t)
-
-    # unit quaternion aligning b to a
-    u = conj((b / abs_b) * conj(a / abs_a))
-    s = cs * u
-    c = cs * t
-    ρ = b * inv(conj(s))
-  else
-    t = abs_b / abs_a
-    c = one(T) / sqrt(one(T) + t*t)
-    u = conj((b / abs_b) * conj(a / abs_a))
-    s = (c * t) * u
-    ρ = a / c
-  end
-
-  return (c, s, ρ)
-end
-
-sym_givens(a::Quaternion{T}, b::T) where T <: AbstractFloat = sym_givens(a, Quaternion{T}(b))
-sym_givens(a::T, b::Quaternion{T}) where T <: AbstractFloat = sym_givens(Quaternion{T}(a), b)
 
 """
     roots = roots_quadratic(q₂, q₁, q₀; nitref)
@@ -361,7 +312,6 @@ kdot(n :: Integer, x :: AbstractVector{T}, y :: AbstractVector{T}) where T <: Fl
 
 kdotr(n :: Integer, x :: AbstractVector{T}, y :: AbstractVector{T}) where T <: AbstractFloat = kdot(n, x, y)
 kdotr(n :: Integer, x :: AbstractVector{Complex{T}}, y :: AbstractVector{Complex{T}}) where T <: AbstractFloat = kdot(n, x, y) |> real
-kdotr(n :: Integer, x :: AbstractVector{Quaternion{T}}, y :: AbstractVector{Quaternion{T}}) where T <: AbstractFloat = kdot(n, x, y) |> real
 
 knorm(n :: Integer, x :: Vector{T}) where T <: BLAS.BlasFloat = BLAS.nrm2(n, x, 1)
 knorm(n :: Integer, x :: AbstractVector{T}) where T <: FloatOrComplex = norm(x)
@@ -371,38 +321,28 @@ knorm_elliptic(n :: Integer, x :: AbstractVector{T}, y :: AbstractVector{T}) whe
 kscal!(n :: Integer, s :: T, x :: Vector{T}) where T <: BLAS.BlasFloat = BLAS.scal!(n, s, x, 1)
 kscal!(n :: Integer, s :: T, x :: AbstractVector{T}) where T <: FloatOrComplex = rmul!(x, s)
 kscal!(n :: Integer, s :: T, x :: AbstractVector{Complex{T}}) where T <: AbstractFloat = kscal!(n, Complex{T}(s), x)
-kscal!(n :: Integer, s :: T, x :: AbstractVector{Quaternion{T}}) where T <: AbstractFloat = kscal!(n, Quaternion{T}(s), x)
 
 kdiv!(n :: Integer, x :: AbstractVector{T}, s :: T) where T <: FloatOrComplex = kscal!(n, one(T) / s, x)
 kdiv!(n :: Integer, x :: AbstractVector{Complex{T}}, s :: T) where T <: AbstractFloat = kscal!(n, one(T) / s, x)
-kdiv!(n :: Integer, x :: AbstractVector{Quaternion{T}}, s :: T) where T <: AbstractFloat = kscal!(n, one(T) / s, x)
 
 kcopy!(n :: Integer, y :: Vector{T}, x :: Vector{T}) where T <: BLAS.BlasFloat = BLAS.blascopy!(n, x, 1, y, 1)
 kcopy!(n :: Integer, y :: AbstractVector, x :: AbstractVector) = copyto!(y, x)
 
 kscalcopy!(n :: Integer, y :: AbstractVector{T}, s :: T, x :: AbstractVector{T}) where T <: FloatOrComplex = (y .= s .* x)
 kscalcopy!(n :: Integer, y :: AbstractVector{Complex{T}}, s :: T, x :: AbstractVector{Complex{T}}) where T <: AbstractFloat = (y .= s .* x)
-kscalcopy!(n :: Integer, y :: AbstractVector{Quaternion{T}}, s :: T, x :: AbstractVector{Quaternion{T}}) where T <: AbstractFloat = (y .= s .* x)
 
-kdivcopy!(n :: Integer, y :: AbstractVector{T}, x :: AbstractVector{T}, s :: T) where T <: AbstractFloat = (y .= x ./ s)
-kdivcopy!(n :: Integer, y :: AbstractVector{Complex{T}}, x :: AbstractVector{Complex{T}}, s :: Complex{T}) where T <: AbstractFloat = (y .= x ./ s)
-kdivcopy!(n :: Integer, y :: AbstractVector{Quaternion{T}}, x :: AbstractVector{Quaternion{T}}, s :: Quaternion{T}) where T <: AbstractFloat = (y .= inv(s) .* x)
+kdivcopy!(n :: Integer, y :: AbstractVector{T}, x :: AbstractVector{T}, s :: T) where T <: FloatOrComplex = (y .= x ./ s)
 kdivcopy!(n :: Integer, y :: AbstractVector{Complex{T}}, x :: AbstractVector{Complex{T}}, s :: T) where T <: AbstractFloat = (y .= x ./ s)
-kdivcopy!(n :: Integer, y :: AbstractVector{Quaternion{T}}, x :: AbstractVector{Quaternion{T}}, s :: T) where T <: AbstractFloat = (y .= inv(s) .* x)
 
 kaxpy!(n :: Integer, s :: T, x :: Vector{T}, y :: Vector{T}) where T <: BLAS.BlasFloat = BLAS.axpy!(n, s, x, 1, y, 1)
 kaxpy!(n :: Integer, s :: T, x :: AbstractVector{T}, y :: AbstractVector{T}) where T <: FloatOrComplex = axpy!(s, x, y)
 kaxpy!(n :: Integer, s :: T, x :: AbstractVector{Complex{T}}, y :: AbstractVector{Complex{T}}) where T <: AbstractFloat = kaxpy!(n, Complex{T}(s), x, y)
-kaxpy!(n :: Integer, s :: T, x :: AbstractVector{Quaternion{T}}, y :: AbstractVector{Quaternion{T}}) where T <: AbstractFloat = kaxpy!(n, Quaternion{T}(s), x, y)
 
 kaxpby!(n :: Integer, s :: T, x :: Vector{T}, t :: T, y :: Vector{T}) where T <: BLAS.BlasFloat = BLAS.axpby!(n, s, x, 1, t, y, 1)
 kaxpby!(n :: Integer, s :: T, x :: AbstractVector{T}, t :: T, y :: AbstractVector{T}) where T <: FloatOrComplex = axpby!(s, x, t, y)
 kaxpby!(n :: Integer, s :: T, x :: AbstractVector{Complex{T}}, t :: Complex{T}, y :: AbstractVector{Complex{T}}) where T <: AbstractFloat = kaxpby!(n, Complex{T}(s), x, t, y)
 kaxpby!(n :: Integer, s :: Complex{T}, x :: AbstractVector{Complex{T}}, t :: T, y :: AbstractVector{Complex{T}}) where T <: AbstractFloat = kaxpby!(n, s, x, Complex{T}(t), y)
 kaxpby!(n :: Integer, s :: T, x :: AbstractVector{Complex{T}}, t :: T, y :: AbstractVector{Complex{T}}) where T <: AbstractFloat = kaxpby!(n, Complex{T}(s), x, Complex{T}(t), y)
-kaxpby!(n :: Integer, s :: T, x :: AbstractVector{Quaternion{T}}, t :: Quaternion{T}, y :: AbstractVector{Quaternion{T}}) where T <: AbstractFloat = kaxpby!(n, Quaternion{T}(s), x, t, y)
-kaxpby!(n :: Integer, s :: Quaternion{T}, x :: AbstractVector{Quaternion{T}}, t :: T, y :: AbstractVector{Quaternion{T}}) where T <: AbstractFloat = kaxpby!(n, s, x, Quaternion{T}(t), y)
-kaxpby!(n :: Integer, s :: T, x :: AbstractVector{Quaternion{T}}, t :: T, y :: AbstractVector{Quaternion{T}}) where T <: AbstractFloat = kaxpby!(n, Quaternion{T}(s), x, Quaternion{T}(t), y)
 
 kfill!(x :: AbstractArray{T}, val :: T) where T <: FloatOrComplex = fill!(x, val)
 
