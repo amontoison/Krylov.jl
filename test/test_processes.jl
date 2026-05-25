@@ -21,7 +21,7 @@ end
   k = 20
   s = 5
 
-  for FC in (Float64, ComplexF64)
+  for FC in (Float64, ComplexF64, QuaternionF64)
     R = real(FC)
     nbits_FC = sizeof(FC)
     nbits_R = sizeof(R)

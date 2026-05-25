@@ -371,19 +371,22 @@ knorm_elliptic(n :: Integer, x :: AbstractVector{T}, y :: AbstractVector{T}) whe
 kscal!(n :: Integer, s :: T, x :: Vector{T}) where T <: BLAS.BlasFloat = BLAS.scal!(n, s, x, 1)
 kscal!(n :: Integer, s :: T, x :: AbstractVector{T}) where T <: FloatOrComplex = rmul!(x, s)
 kscal!(n :: Integer, s :: T, x :: AbstractVector{Complex{T}}) where T <: AbstractFloat = kscal!(n, Complex{T}(s), x)
+kscal!(n :: Integer, s :: T, x :: AbstractVector{Quaternion{T}}) where T <: AbstractFloat = kscal!(n, Quaternion{T}(s), x)
 
 kdiv!(n :: Integer, x :: AbstractVector{T}, s :: T) where T <: FloatOrComplex = kscal!(n, one(T) / s, x)
 kdiv!(n :: Integer, x :: AbstractVector{Complex{T}}, s :: T) where T <: AbstractFloat = kscal!(n, one(T) / s, x)
+kdiv!(n :: Integer, x :: AbstractVector{Quaternion{T}}, s :: T) where T <: AbstractFloat = kscal!(n, one(T) / s, x)
 
 kcopy!(n :: Integer, y :: Vector{T}, x :: Vector{T}) where T <: BLAS.BlasFloat = BLAS.blascopy!(n, x, 1, y, 1)
 kcopy!(n :: Integer, y :: AbstractVector, x :: AbstractVector) = copyto!(y, x)
 
 kscalcopy!(n :: Integer, y :: AbstractVector{T}, s :: T, x :: AbstractVector{T}) where T <: FloatOrComplex = (y .= s .* x)
 kscalcopy!(n :: Integer, y :: AbstractVector{Complex{T}}, s :: T, x :: AbstractVector{Complex{T}}) where T <: AbstractFloat = (y .= s .* x)
+kscalcopy!(n :: Integer, y :: AbstractVector{Quaternion{T}}, s :: T, x :: AbstractVector{Quaternion{T}}) where T <: AbstractFloat = (y .= s .* x)
 
 kdivcopy!(n :: Integer, y :: AbstractVector{T}, x :: AbstractVector{T}, s :: T) where T <: FloatOrComplex = (y .= x ./ s)
 kdivcopy!(n :: Integer, y :: AbstractVector{Complex{T}}, x :: AbstractVector{Complex{T}}, s :: T) where T <: AbstractFloat = (y .= x ./ s)
-kdivcopy!(n :: Integer, y :: AbstractVector{Quaternion{T}}, x :: AbstractVector{Quaternion{T}}, s :: T) where T <: AbstractFloat = (y .= x ./ s)
+kdivcopy!(n :: Integer, y :: AbstractVector{Quaternion{T}}, x :: AbstractVector{Quaternion{T}}, s :: T) where T <: AbstractFloat = (y .= inv(s) .* x)
 
 kaxpy!(n :: Integer, s :: T, x :: Vector{T}, y :: Vector{T}) where T <: BLAS.BlasFloat = BLAS.axpy!(n, s, x, 1, y, 1)
 kaxpy!(n :: Integer, s :: T, x :: AbstractVector{T}, y :: AbstractVector{T}) where T <: FloatOrComplex = axpy!(s, x, y)

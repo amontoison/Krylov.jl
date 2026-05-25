@@ -67,7 +67,7 @@ function test_mp(FC)
 end
 
 @testset "mp" begin
-  for FC in (Float16, Float32, Float64, BigFloat, Complex{Float16}, ComplexF32, ComplexF64, Complex{BigFloat})
+  for FC in (Float16, Float32, Float64, BigFloat, Complex{Float16}, ComplexF32, ComplexF64, Complex{BigFloat}, QuaternionF32, QuaternionF64, Quaternion{BigFloat})
     @testset "Data Type: $FC" begin
       test_mp(FC)
     end

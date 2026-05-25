@@ -418,7 +418,7 @@ function test_show(workspace)
 end
 
 @testset "Krylov solvers" begin
-  for FC in (Float64, ComplexF64)
+  for FC in (Float64, ComplexF64, QuaternionF64)
     @testset "Data Type: $FC" begin
       for krylov_constructor in (false, true)
         for use_val in (false, true)
