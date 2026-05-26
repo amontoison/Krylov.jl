@@ -66,6 +66,16 @@ jobs:
           version: '1.12'
 
       # -----------------------------------------------------------------------
+      # Install gfortran on macOS (not pre-installed on GitHub runners)
+      # -----------------------------------------------------------------------
+      - name: Install gfortran (macOS)
+        if: runner.os == 'macOS'
+        uses: fortran-lang/setup-fortran@main
+        with:
+          compiler: 'gcc'
+          version: '14'
+
+      # -----------------------------------------------------------------------
       # Install JuliaC.jl (provides the juliac CLI)
       # -----------------------------------------------------------------------
       - name: Install JuliaC.jl
@@ -77,10 +87,12 @@ jobs:
             Pkg.Apps.add(\"JuliaC\")
           "
 
-      - name: Add juliac to PATH
+      - name: Add juliac and Julia runtime to PATH
         shell: bash
         run: |
-          JULIA_BIN=$(julia --startup-file=no -e "print(joinpath(DEPOT_PATH[1], \"bin\"))")
+          JULIAC_BIN=$(julia --startup-file=no -e "print(joinpath(DEPOT_PATH[1], \"bin\"))")
+          JULIA_BIN=$(julia --startup-file=no -e "print(Sys.BINDIR)")
+          echo "$JULIAC_BIN" >> "$GITHUB_PATH"
           echo "$JULIA_BIN" >> "$GITHUB_PATH"
 
       # -----------------------------------------------------------------------
