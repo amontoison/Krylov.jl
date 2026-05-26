@@ -68,7 +68,7 @@ int main(void)
    * Create workspace for CG, double precision, CPU
    * --------------------------------------------------------------------- */
   void *ws = NULL;
-  int ret = krylov_workspace_create("cg", N, N,
+  int ret = krylov_workspace_create(KRYLOV_CG, N, N,
                                     KRYLOV_FLOAT64, KRYLOV_CPU,
                                     &ws);
   if (ret != 0) {
@@ -83,7 +83,8 @@ int main(void)
                      matvec_A,   /* y = A*x */
                      NULL,       /* y = A'*x  (CG doesn't need it) */
                      NULL,       /* no preconditioner */
-                     b,          /* right-hand side */
+                     b,          /* right-hand side b (size m) */
+                     NULL,       /* c = NULL  (CG only needs one RHS) */
                      &A,         /* userdata forwarded to matvec_A */
                      1e-10,      /* atol */
                      1e-10,      /* rtol */

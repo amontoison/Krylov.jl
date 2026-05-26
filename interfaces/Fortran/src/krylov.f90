@@ -20,12 +20,50 @@
   ! Enumerators  (must match krylov.h)
   ! -------------------------------------------------------------------------
 
+  ! KrylovDataType
   integer(c_int), parameter :: KRYLOV_FLOAT32   = 0
   integer(c_int), parameter :: KRYLOV_FLOAT64   = 1
-  integer(c_int), parameter :: KRYLOV_COMPLEX32  = 2
-  integer(c_int), parameter :: KRYLOV_COMPLEX64  = 3
+  integer(c_int), parameter :: KRYLOV_COMPLEX32 = 2
+  integer(c_int), parameter :: KRYLOV_COMPLEX64 = 3
 
+  ! KrylovDeviceType
   integer(c_int), parameter :: KRYLOV_CPU = 0
+
+  ! KrylovSolverType
+  integer(c_int), parameter :: KRYLOV_CG         =  0
+  integer(c_int), parameter :: KRYLOV_CR         =  1
+  integer(c_int), parameter :: KRYLOV_SYMMLQ     =  2
+  integer(c_int), parameter :: KRYLOV_MINRES     =  3
+  integer(c_int), parameter :: KRYLOV_MINRES_QLP =  4
+  integer(c_int), parameter :: KRYLOV_DIOM       =  5
+  integer(c_int), parameter :: KRYLOV_DQGMRES    =  6
+  integer(c_int), parameter :: KRYLOV_FOM        =  7
+  integer(c_int), parameter :: KRYLOV_GMRES      =  8
+  integer(c_int), parameter :: KRYLOV_FGMRES     =  9
+  integer(c_int), parameter :: KRYLOV_BICGSTAB   = 10
+  integer(c_int), parameter :: KRYLOV_CGS        = 11
+  integer(c_int), parameter :: KRYLOV_BILQ       = 12
+  integer(c_int), parameter :: KRYLOV_QMR        = 13
+  integer(c_int), parameter :: KRYLOV_USYMLQ     = 14
+  integer(c_int), parameter :: KRYLOV_USYMQR     = 15
+  integer(c_int), parameter :: KRYLOV_TRICG      = 16
+  integer(c_int), parameter :: KRYLOV_TRIMR      = 17
+  integer(c_int), parameter :: KRYLOV_TRILQR     = 18
+  integer(c_int), parameter :: KRYLOV_BILQR      = 19
+  integer(c_int), parameter :: KRYLOV_LSLQ       = 20
+  integer(c_int), parameter :: KRYLOV_LSQR       = 21
+  integer(c_int), parameter :: KRYLOV_LSMR       = 22
+  integer(c_int), parameter :: KRYLOV_USYMLQR    = 23
+  integer(c_int), parameter :: KRYLOV_CGLS       = 24
+  integer(c_int), parameter :: KRYLOV_CRLS       = 25
+  integer(c_int), parameter :: KRYLOV_CGNE       = 26
+  integer(c_int), parameter :: KRYLOV_CRMR       = 27
+  integer(c_int), parameter :: KRYLOV_CRAIG      = 28
+  integer(c_int), parameter :: KRYLOV_CRAIGMR    = 29
+  integer(c_int), parameter :: KRYLOV_LNLQ       = 30
+  integer(c_int), parameter :: KRYLOV_GPMR       = 31
+  integer(c_int), parameter :: KRYLOV_CAR        = 32
+  integer(c_int), parameter :: KRYLOV_MINARES    = 33
 
   ! -------------------------------------------------------------------------
   ! Callback interface
@@ -63,12 +101,12 @@
     ! -----------------------------------------------------------------------
     ! krylov_workspace_create
     !
-    ! Creates a workspace for the named solver.
+    ! Creates a workspace for the given solver.
     !
-    !   solver  : null-terminated solver name, e.g. "cg"//c_null_char
+    !   solver  : KrylovSolverType constant (e.g. KRYLOV_CG, KRYLOV_GMRES)
     !   m, n    : operator dimensions
-    !   dtype   : KRYLOV_FLOAT32 / KRYLOV_FLOAT64 / KRYLOV_COMPLEX32 / KRYLOV_COMPLEX64
-    !   device  : KRYLOV_CPU
+    !   dtype   : KrylovDataType constant (KRYLOV_FLOAT32 / KRYLOV_FLOAT64 / ...)
+    !   device  : KrylovDeviceType constant (KRYLOV_CPU)
     !   ws      : receives the opaque workspace handle
     !
     ! Returns 0 on success, nonzero on error.
@@ -76,10 +114,9 @@
     function krylov_workspace_create(solver, m, n, dtype, device, ws) &
         bind(c, name='krylov_workspace_create') result(ret)
       use iso_c_binding
-      character(kind=c_char), dimension(*), intent(in) :: solver
-      integer(c_int),         value                    :: m, n, dtype, device
-      type(c_ptr),            intent(out)              :: ws
-      integer(c_int)                                   :: ret
+      integer(c_int), value       :: solver, m, n, dtype, device
+      type(c_ptr),    intent(out) :: ws
+      integer(c_int)              :: ret
     end function krylov_workspace_create
 
     ! -----------------------------------------------------------------------
@@ -89,7 +126,9 @@
     !   matvec_A   : callback  y = A*x          (required)
     !   matvec_At  : callback  y = A'*x         (c_null_funptr for CG/GMRES/...)
     !   matvec_M   : callback  y = M\x          (c_null_funptr = no preconditioner)
-    !   b          : right-hand side pointer (c_loc of your array)
+    !   b          : first right-hand side pointer (c_loc of your array, size m)
+    !   c          : second right-hand side pointer (c_loc of your array, size n)
+    !                  c_null_ptr for solvers that only need one RHS
     !   userdata   : forwarded to every callback (c_loc or c_null_ptr)
     !   atol,rtol  : tolerances
     !   itmax      : max iterations (0 = solver default)
@@ -98,14 +137,15 @@
     ! Returns 0 on success, nonzero on error.
     ! -----------------------------------------------------------------------
     function krylov_solve(ws, matvec_A, matvec_At, matvec_M, &
-                          b, userdata, atol, rtol, itmax, verbose) &
+                          b, c, userdata, atol, rtol, itmax, verbose) &
         bind(c, name='krylov_solve') result(ret)
       use iso_c_binding
       type(c_ptr),    value :: ws
       type(c_funptr), value :: matvec_A    ! y = A*x
       type(c_funptr), value :: matvec_At   ! y = A'*x  or  c_null_funptr
       type(c_funptr), value :: matvec_M    ! y = M\x   or  c_null_funptr
-      type(c_ptr),    value :: b           ! c_loc(b_array)
+      type(c_ptr),    value :: b           ! c_loc(b_array), size m
+      type(c_ptr),    value :: c           ! c_loc(c_array), size n  or  c_null_ptr
       type(c_ptr),    value :: userdata    ! c_loc(data)  or  c_null_ptr
       real(c_double), value :: atol, rtol
       integer(c_int), value :: itmax, verbose

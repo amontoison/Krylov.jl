@@ -7,42 +7,7 @@
 # ---------------------------------------------------------------------------
 # Solver table: (c_name, workspace_type_name)
 # ---------------------------------------------------------------------------
-const SOLVERS = [
-  ("cg",         "CgWorkspace"),
-  ("cr",         "CrWorkspace"),
-  ("symmlq",     "SymmlqWorkspace"),
-  ("minres",     "MinresWorkspace"),
-  ("minres_qlp", "MinresQlpWorkspace"),
-  ("diom",       "DiomWorkspace"),
-  ("dqgmres",    "DqgmresWorkspace"),
-  ("fom",        "FomWorkspace"),
-  ("gmres",      "GmresWorkspace"),
-  ("fgmres",     "FgmresWorkspace"),
-  ("bicgstab",   "BicgstabWorkspace"),
-  ("cgs",        "CgsWorkspace"),
-  ("bilq",       "BilqWorkspace"),
-  ("qmr",        "QmrWorkspace"),
-  ("usymlq",     "UsymlqWorkspace"),
-  ("usymqr",     "UsymqrWorkspace"),
-  ("tricg",      "TricgWorkspace"),
-  ("trimr",      "TrimrWorkspace"),
-  ("trilqr",     "TrilqrWorkspace"),
-  ("bilqr",      "BilqrWorkspace"),
-  ("lslq",       "LslqWorkspace"),
-  ("lsqr",       "LsqrWorkspace"),
-  ("lsmr",       "LsmrWorkspace"),
-  ("usymlqr",    "UsymlqrWorkspace"),
-  ("cgls",       "CglsWorkspace"),
-  ("crls",       "CrlsWorkspace"),
-  ("cgne",       "CgneWorkspace"),
-  ("crmr",       "CrmrWorkspace"),
-  ("craig",      "CraigWorkspace"),
-  ("craigmr",    "CraigmrWorkspace"),
-  ("lnlq",       "LnlqWorkspace"),
-  ("gpmr",       "GpmrWorkspace"),
-  ("car",        "CarWorkspace"),
-  ("minares",    "MinaresWorkspace"),
-]
+include(joinpath(@__DIR__, "solver_table.jl"))
 
 # ---------------------------------------------------------------------------
 # Precision table: (dtype_int, suffix, T_real, FC, S)
@@ -57,6 +22,13 @@ const DTYPES = [
 # Combo key: solver_idx * 4 + dtype_idx  (max = 33*4+3 = 135, fits UInt8)
 combo_key(si, di) = UInt8(si * 4 + di)
 store_name(sname, suffix) = "store_$(sname)_$(suffix)"
+solver_idx(si) = si - 1   # 0-based, matches KrylovSolverType enum value
+
+# Solvers that require two RHS vectors (b of size m and c of size n)
+const TWO_RHS_SOLVERS = Set(["tricg", "trimr", "bilqr", "trilqr", "usymlq", "usymqr", "usymlqr"])
+
+# gpmr uses (A, B, b, c): fptr_At slot is repurposed as the B operator (n×m)
+const GPMR_SOLVER = "gpmr"
 
 # ---------------------------------------------------------------------------
 # Write c_stores.jl
@@ -86,7 +58,7 @@ open(out, "w") do io
 # Typed workspace stores
 # ---------------------------------------------------------------------------
 """)
-  for (si, (sname, wstype)) in enumerate(SOLVERS)
+  for (si, (sname, wstype, _)) in enumerate(SOLVERS)
     for (di, (_, suffix, T, FC, S)) in enumerate(DTYPES)
       println(io, "const $(store_name(sname, suffix)) = ",
                   "Dict{Ptr{Cvoid}, Krylov.$(wstype){$(T), $(FC), $(S)}}()")
@@ -150,7 +122,8 @@ function _typed_warm_start!(ws::Krylov.KrylovWorkspace{T, FC, S}, x0_ptr, n) whe
   Cint(0)
 end
 
-function _typed_solve!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fptr_M, b_ptr, userdata, atol, rtol, itmax, verbose) where {T, FC, S}
+# One-RHS solvers — c_ptr is always NULL (ignored)
+function _typed_solve!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose) where {T, FC, S}
   A  = COperator{FC}(ws.m, ws.n, fptr_A, fptr_At, userdata)
   b  = unsafe_wrap(Vector{FC}, Ptr{FC}(b_ptr), ws.m)
   it = itmax > 0 ? Int(itmax) : 0
@@ -162,6 +135,36 @@ function _typed_solve!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fp
   else
     Krylov.krylov_solve!(ws, A, b; kw...)
   end
+  Cint(0)
+end
+
+# Two-RHS solvers — c_ptr points to a vector of length n
+function _typed_solve_two_rhs!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose) where {T, FC, S}
+  A  = COperator{FC}(ws.m, ws.n, fptr_A, fptr_At, userdata)
+  b  = unsafe_wrap(Vector{FC}, Ptr{FC}(b_ptr), ws.m)
+  c  = unsafe_wrap(Vector{FC}, Ptr{FC}(c_ptr), ws.n)
+  it = itmax > 0 ? Int(itmax) : 0
+  kw = (atol=T(atol), rtol=T(rtol), verbose=Int(verbose))
+  kw = it > 0 ? merge(kw, (itmax=it,)) : kw
+  if fptr_M != C_NULL
+    M = CPreconditioner{FC}(ws.n, fptr_M, userdata)
+    Krylov.krylov_solve!(ws, A, b, c; M=M, kw...)
+  else
+    Krylov.krylov_solve!(ws, A, b, c; kw...)
+  end
+  Cint(0)
+end
+
+# GPMR — fptr_At slot is repurposed as B (n×m), distinct from A (m×n)
+function _typed_solve_gpmr!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_B, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose) where {T, FC, S}
+  A  = COperator{FC}(ws.m, ws.n, fptr_A, C_NULL, userdata)
+  B  = COperator{FC}(ws.n, ws.m, fptr_B, C_NULL, userdata)
+  b  = unsafe_wrap(Vector{FC}, Ptr{FC}(b_ptr), ws.m)
+  c  = unsafe_wrap(Vector{FC}, Ptr{FC}(c_ptr), ws.n)
+  it = itmax > 0 ? Int(itmax) : 0
+  kw = (atol=T(atol), rtol=T(rtol), verbose=Int(verbose))
+  kw = it > 0 ? merge(kw, (itmax=it,)) : kw
+  Krylov.krylov_solve!(ws, A, B, b, c; kw...)
   Cint(0)
 end
 """)
@@ -182,7 +185,7 @@ end
     println(io, "  $(guard) || return $(fallback)")
     println(io, "  k = ws_key_store[ws_ptr]")
     first = true
-    for (si, (sname, _)) in enumerate(SOLVERS)
+    for (si, (sname, _, _)) in enumerate(SOLVERS)
       for (di, (_, suffix, _, _, _)) in enumerate(DTYPES)
         key  = combo_key(si-1, di-1)
         sref = "$(store_name(sname, suffix))[ws_ptr]"
@@ -226,13 +229,30 @@ end
     sref -> "_typed_warm_start!($(sref), x0_ptr, n)",
     "Cint(-1)")
 
-  emit_dispatch(io, "_do_solve!", join([
-    "ws_ptr :: Ptr{Cvoid}", "fptr_A :: Ptr{Cvoid}", "fptr_At :: Ptr{Cvoid}",
-    "fptr_M :: Ptr{Cvoid}", "b_ptr :: Ptr{Cvoid}", "userdata :: Ptr{Cvoid}",
-    "atol :: Cdouble", "rtol :: Cdouble", "itmax :: Cint", "verbose :: Cint"], ", "),
-    "haskey(ws_key_store, ws_ptr)",
-    sref -> "_typed_solve!($(sref), fptr_A, fptr_At, fptr_M, b_ptr, userdata, atol, rtol, itmax, verbose)",
-    "Cint(-1)")
+  # _do_solve! — dispatches to the right helper per solver type
+  let sig = join(["ws_ptr :: Ptr{Cvoid}", "fptr_A :: Ptr{Cvoid}", "fptr_At :: Ptr{Cvoid}",
+                  "fptr_M :: Ptr{Cvoid}", "b_ptr :: Ptr{Cvoid}", "c_ptr :: Ptr{Cvoid}",
+                  "userdata :: Ptr{Cvoid}",
+                  "atol :: Cdouble", "rtol :: Cdouble", "itmax :: Cint", "verbose :: Cint"], ", ")
+    println(io, "function _do_solve!($(sig))")
+    println(io, "  haskey(ws_key_store, ws_ptr) || return Cint(-1)")
+    println(io, "  k = ws_key_store[ws_ptr]")
+    first = true
+    for (si, (sname, _, _)) in enumerate(SOLVERS)
+      fn = sname == GPMR_SOLVER ? "_typed_solve_gpmr!" :
+           sname in TWO_RHS_SOLVERS ? "_typed_solve_two_rhs!" : "_typed_solve!"
+      for (di, (_, suffix, _, _, _)) in enumerate(DTYPES)
+        key  = combo_key(si-1, di-1)
+        sref = "$(store_name(sname, suffix))[ws_ptr]"
+        kw   = first ? "if" : "elseif"
+        println(io, "  $(kw) k == 0x$(string(key, base=16, pad=2)); $(fn)($(sref), fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)")
+        first = false
+      end
+    end
+    println(io, "  else; Cint(-1); end")
+    println(io, "end")
+    println(io)
+  end
 
   # _do_free! — deletes from the right store AND the key index
   println(io, "function _do_free!(ws_ptr :: Ptr{Cvoid})")
@@ -240,7 +260,7 @@ end
   println(io, "  k = ws_key_store[ws_ptr]")
   println(io, "  delete!(ws_key_store, ws_ptr)")
   first = true
-  for (si, (sname, _)) in enumerate(SOLVERS)
+  for (si, (sname, _, _)) in enumerate(SOLVERS)
     for (di, (_, suffix, _, _, _)) in enumerate(DTYPES)
       key = combo_key(si-1, di-1)
       kw  = first ? "if" : "elseif"
@@ -253,16 +273,17 @@ end
   println(io, "end")
   println(io)
 
-  # _do_create! — dispatch on (solver_str, dtype_int), stores in right dict
-  println(io, "function _do_create!(solver_str :: AbstractString, m :: Cint, n :: Cint,")
+  # _do_create! — dispatch on (solver_int, dtype_int), stores in right dict
+  println(io, "function _do_create!(solver_int :: Cint, m :: Cint, n :: Cint,")
   println(io, "                     dtype_int :: Cint, ws_out :: Ptr{Ptr{Cvoid}})")
   first = true
-  for (si, (sname, wstype)) in enumerate(SOLVERS)
+  for (si, (sname, wstype, _)) in enumerate(SOLVERS)
     for (di, (dtype_int, suffix, T, FC, S)) in enumerate(DTYPES)
-      key  = combo_key(si-1, di-1)
-      kw   = first ? "if" : "elseif"
-      sref = store_name(sname, suffix)
-      println(io, "  $(kw) solver_str == \"$(sname)\" && dtype_int == Cint($(dtype_int))")
+      key      = combo_key(si-1, di-1)
+      kw       = first ? "if" : "elseif"
+      sref     = store_name(sname, suffix)
+      sidx     = solver_idx(si)
+      println(io, "  $(kw) solver_int == Cint($(sidx)) && dtype_int == Cint($(dtype_int))")
       println(io, "    ws = Krylov.$(wstype)(Int(m), Int(n), $(S))")
       println(io, "    r  = Base.pointer_from_objref(ws)")
       println(io, "    $(sref)[r] = ws; ws_key_store[r] = 0x$(string(key, base=16, pad=2))")

@@ -32,30 +32,46 @@ end
 const LIBKRYLOV = Libdl.dlopen(get(ENV, "LIBKRYLOV_PATH", default_libpath()))
 
 # ============================================================================
-# Enums (must match krylov.h)
+# Enums (must match krylov.h / solver_table.jl)
 # ============================================================================
 
+include(joinpath(@__DIR__, "..", "scripts", "solver_table.jl"))
+
+# KrylovDataType
 const KRYLOV_FLOAT32   = Cint(0)
 const KRYLOV_FLOAT64   = Cint(1)
 const KRYLOV_COMPLEX32 = Cint(2)
 const KRYLOV_COMPLEX64 = Cint(3)
-const KRYLOV_CPU       = Cint(0)
+
+# KrylovDeviceType
+const KRYLOV_CPU = Cint(0)
+
+# KrylovSolverType — derived from solver_table.jl (single source of truth)
+for (si, (cname, _, enum_name)) in enumerate(SOLVERS)
+    @eval const $(Symbol(enum_name)) = Cint($(si - 1))
+end
 
 dtype_enum(::Type{Float32})    = KRYLOV_FLOAT32
 dtype_enum(::Type{Float64})    = KRYLOV_FLOAT64
 dtype_enum(::Type{ComplexF32}) = KRYLOV_COMPLEX32
 dtype_enum(::Type{ComplexF64}) = KRYLOV_COMPLEX64
 
+solver_enum(name::String) = begin
+    idx = findfirst(t -> t[1] == name, SOLVERS)
+    idx === nothing && error("unknown solver: $name")
+    Cint(idx - 1)
+end
+
 # ============================================================================
 # C API wrappers
 # ============================================================================
 
-function c_workspace_create(solver::String, m::Int, n::Int, dtype::Cint)
+function c_workspace_create(solver::Cint, m::Int, n::Int, dtype::Cint)
     ws = Ref{Ptr{Cvoid}}(C_NULL)
     ret = ccall(Libdl.dlsym(LIBKRYLOV, :krylov_workspace_create), Cint,
-        (Cstring, Cint, Cint, Cint, Cint, Ref{Ptr{Cvoid}}),
+        (Cint, Cint, Cint, Cint, Cint, Ref{Ptr{Cvoid}}),
         solver, m, n, dtype, KRYLOV_CPU, ws)
-    ret == 0 || error("workspace_create($solver, dtype=$dtype) returned $ret")
+    ret == 0 || error("workspace_create(solver=$solver, dtype=$dtype) returned $ret")
     ws[]
 end
 
@@ -64,13 +80,25 @@ function c_workspace_free(ws::Ptr{Cvoid})
 end
 
 function c_solve(ws::Ptr{Cvoid}, cb_A::Ptr{Cvoid}, cb_At::Ptr{Cvoid},
-                 b::Vector; atol=1e-8, rtol=1e-8, itmax=0, verbose=0)
+                 b::Vector; c::Union{Vector,Nothing}=nothing,
+                 atol=1e-8, rtol=1e-8, itmax=0, verbose=0)
     GC.@preserve b begin
-        ret = ccall(Libdl.dlsym(LIBKRYLOV, :krylov_solve), Cint,
-            (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid},
-             Ptr{Cvoid}, Ptr{Cvoid}, Cdouble, Cdouble, Cint, Cint),
-            ws, cb_A, cb_At, C_NULL,
-            pointer(b), C_NULL, Float64(atol), Float64(rtol), itmax, verbose)
+        c_ptr = c === nothing ? C_NULL : pointer(c)
+        if c !== nothing
+            GC.@preserve c begin
+                ret = ccall(Libdl.dlsym(LIBKRYLOV, :krylov_solve), Cint,
+                    (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid},
+                     Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cdouble, Cdouble, Cint, Cint),
+                    ws, cb_A, cb_At, C_NULL,
+                    pointer(b), pointer(c), C_NULL, Float64(atol), Float64(rtol), itmax, verbose)
+            end
+        else
+            ret = ccall(Libdl.dlsym(LIBKRYLOV, :krylov_solve), Cint,
+                (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid},
+                 Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Cdouble, Cdouble, Cint, Cint),
+                ws, cb_A, cb_At, C_NULL,
+                pointer(b), C_NULL, C_NULL, Float64(atol), Float64(rtol), itmax, verbose)
+        end
     end
     ret == 0 || error("krylov_solve returned $ret")
 end
@@ -148,15 +176,15 @@ const CB_At_C32 = @cfunction(_mv_At_c32, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvo
 const CB_A_C64  = @cfunction(_mv_A_c64,  Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}))
 const CB_At_C64 = @cfunction(_mv_At_c64, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}))
 
-function set_matrices!(::Type{Float32},    A, At) _A_f32[]  = A; _At_f32[]  = At end
-function set_matrices!(::Type{Float64},    A, At) _A_f64[]  = A; _At_f64[]  = At end
-function set_matrices!(::Type{ComplexF32}, A, At) _A_c32[]  = A; _At_c32[]  = At end
-function set_matrices!(::Type{ComplexF64}, A, At) _A_c64[]  = A; _At_c64[]  = At end
+set_matrices!(::Type{Float32},    A, At) = (_A_f32[]  = A; _At_f32[]  = At)
+set_matrices!(::Type{Float64},    A, At) = (_A_f64[]  = A; _At_f64[]  = At)
+set_matrices!(::Type{ComplexF32}, A, At) = (_A_c32[]  = A; _At_c32[]  = At)
+set_matrices!(::Type{ComplexF64}, A, At) = (_A_c64[]  = A; _At_c64[]  = At)
 
-function get_callbacks(::Type{Float32})    (CB_A_F32, CB_At_F32) end
-function get_callbacks(::Type{Float64})    (CB_A_F64, CB_At_F64) end
-function get_callbacks(::Type{ComplexF32}) (CB_A_C32, CB_At_C32) end
-function get_callbacks(::Type{ComplexF64}) (CB_A_C64, CB_At_C64) end
+get_callbacks(::Type{Float32})    = (CB_A_F32,  CB_At_F32)
+get_callbacks(::Type{Float64})    = (CB_A_F64,  CB_At_F64)
+get_callbacks(::Type{ComplexF32}) = (CB_A_C32,  CB_At_C32)
+get_callbacks(::Type{ComplexF64}) = (CB_A_C64,  CB_At_C64)
 
 # ============================================================================
 # Test problems
@@ -215,6 +243,9 @@ const NEED_AT = Set([
 # Solvers that return a dual solution via krylov_get_y
 const HAS_Y = Set(["tricg", "trimr", "gpmr", "bilqr", "trilqr"])
 
+# Solvers that require a second RHS vector c (size n)
+const NEED_C = Set(["tricg", "trimr", "bilqr", "trilqr", "usymlq", "usymqr", "usymlqr"])
+
 # Non-symmetric solvers (need a non-symmetric problem)
 const NONSYM = Set(["bilq", "qmr", "bicgstab", "cgs", "diom", "dqgmres",
                     "fom", "gmres", "fgmres",
@@ -261,9 +292,12 @@ function test_solver(solver::String, ::Type{T}) where T
     cb_A, cb_At = get_callbacks(T)
     cb_At_arg = solver in NEED_AT ? cb_At : C_NULL
 
-    ws = c_workspace_create(solver, m, n, dtype_enum(T))
+    # For two-RHS solvers: c = A'*x_true (size n), with x_true = ones
+    c_rhs = solver in NEED_C ? At * x_true : nothing
+
+    ws = c_workspace_create(solver_enum(solver), m, n, dtype_enum(T))
     try
-        c_solve(ws, cb_A, cb_At_arg, b; atol=1e-6, rtol=1e-6)
+        c_solve(ws, cb_A, cb_At_arg, b; c=c_rhs, atol=1e-6, rtol=1e-6)
 
         @test c_is_solved(ws)
         @test c_niter(ws) > 0
@@ -290,7 +324,7 @@ function test_warm_start()
     set_matrices!(Float64, A, Matrix(A'))
     cb_A, _ = get_callbacks(Float64)
 
-    ws = c_workspace_create("cg", n, n, KRYLOV_FLOAT64)
+    ws = c_workspace_create(KRYLOV_CG, n, n, KRYLOV_FLOAT64)
     try
         # First solve from zero
         c_solve(ws, cb_A, C_NULL, b; atol=1e-8, rtol=1e-8)

@@ -146,6 +146,28 @@ jobs:
           echo "$actual" | grep -q "x = \[ 1.00  1.00  1.00  1.00  1.00 \]"
 
       # -----------------------------------------------------------------------
+      # Build and run the C full test (all 31 solvers)
+      # -----------------------------------------------------------------------
+      - name: Build C test (all solvers)
+        shell: bash
+        run: |
+          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          RPATH="${{ matrix.rpath }}"
+          RPATH="${RPATH/LIBPATH/$LIBPATH}"
+          # -lm is implicit on Windows (CRT), harmless flag on Linux/macOS
+          gcc -O2 -o interfaces/C/build/test_all_solvers \
+              interfaces/C/test/test_all_solvers.c \
+              -I interfaces/C/include \
+              "$LIBPATH/${{ matrix.lib }}" \
+              $RPATH -lm
+
+      - name: Run C test (all solvers)
+        shell: bash
+        run: |
+          export PATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}:$PATH"
+          interfaces/C/build/test_all_solvers
+
+      # -----------------------------------------------------------------------
       # Build and run the Fortran smoke test (basic_cg example)
       # -----------------------------------------------------------------------
       - name: Build Fortran example
@@ -168,3 +190,23 @@ jobs:
           echo "$actual"
           echo "$actual" | grep -q "Solved: T"
           echo "$actual" | grep -q "1.00"
+
+      # -----------------------------------------------------------------------
+      # Build and run the Fortran full test (all 31 solvers)
+      # -----------------------------------------------------------------------
+      - name: Build Fortran test (all solvers)
+        shell: bash
+        run: |
+          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          RPATH="${{ matrix.rpath }}"
+          RPATH="${RPATH/LIBPATH/$LIBPATH}"
+          gfortran -O2 -o interfaces/Fortran/build/test_all_solvers \
+              interfaces/Fortran/test/test_all_solvers.f90 \
+              "$LIBPATH/${{ matrix.lib }}" \
+              $RPATH
+
+      - name: Run Fortran test (all solvers)
+        shell: bash
+        run: |
+          export PATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}:$PATH"
+          interfaces/Fortran/build/test_all_solvers

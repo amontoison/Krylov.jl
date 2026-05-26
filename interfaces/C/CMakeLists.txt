@@ -93,3 +93,15 @@ add_executable(basic_cg ${CMAKE_CURRENT_SOURCE_DIR}/examples/basic_cg.c)
 target_link_libraries(basic_cg PRIVATE krylov)
 target_include_directories(basic_cg PRIVATE ${INCLUDE_DIR})
 add_dependencies(basic_cg krylov)
+
+# ---------------------------------------------------------------------------
+# Test executables
+# ---------------------------------------------------------------------------
+enable_testing()
+
+add_executable(test_all_solvers ${CMAKE_CURRENT_SOURCE_DIR}/test/test_all_solvers.c)
+target_link_libraries(test_all_solvers PRIVATE krylov m)
+target_include_directories(test_all_solvers PRIVATE ${INCLUDE_DIR})
+add_dependencies(test_all_solvers krylov)
+
+add_test(NAME test_all_solvers COMMAND test_all_solvers)

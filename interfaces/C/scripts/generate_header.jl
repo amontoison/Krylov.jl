@@ -1,13 +1,23 @@
 #!/usr/bin/env julia
-# Generate interfaces/C/include/krylov.h from the function_sigs table in CKrylov.jl.
+# Generate interfaces/C/include/krylov.h from the function_sigs table in CKrylov.jl
+# and the SOLVERS table in generate_stores.jl (single source of truth).
 # Usage:  julia scripts/generate_header.jl
 
 using Krylov
 
+include(joinpath(@__DIR__, "solver_table.jl"))
 include(joinpath(@__DIR__, "..", "src", "CKrylov.jl"))
 
 # Grab the signature table that CKrylov.jl populated inside its module
 function_sigs = CKrylov.function_sigs
+
+# ---------------------------------------------------------------------------
+# Build KrylovSolverType enum entries from solver_table.jl (single source of truth)
+# ---------------------------------------------------------------------------
+solver_enum_entries = join(
+  ["  $(enum_name) = $(si-1)" for (si, (_, _, enum_name)) in enumerate(SOLVERS)],
+  ",\n"
+)
 
 # ---------------------------------------------------------------------------
 # Write krylov.h
@@ -41,7 +51,11 @@ typedef enum {
 
 typedef enum {
   KRYLOV_CPU = 0,
-} KrylovDevice;
+} KrylovDeviceType;
+
+typedef enum {
+$(solver_enum_entries),
+} KrylovSolverType;
 
 /* -------------------------------------------------------------------------
  * Callback types

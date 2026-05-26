@@ -25,26 +25,26 @@ end
 #
 # Creates a typed Krylov workspace and writes its opaque pointer into *ws_out.
 #
-#   solver  : null-terminated solver name, e.g. "cg", "gmres", "lsqr"
+#   solver  : KrylovSolverType enum value (e.g. KRYLOV_CG, KRYLOV_GMRES)
 #   m, n    : operator dimensions (m rows, n columns)
 #   dtype   : KrylovDataType enum value
-#   device  : KrylovDevice enum value (currently only KRYLOV_CPU = 0)
+#   device  : KrylovDeviceType enum value (currently only KRYLOV_CPU = 0)
 #   ws_out  : address of a pointer that receives the workspace handle
 #
 # Returns 0 on success, -1 on error, -2 on unknown (solver, dtype) combination.
 # ---------------------------------------------------------------------------
-@export_sig krylov_workspace_create "int" (solver, "const char*") (m, "int") (n, "int") (dtype, "int") (device, "int") (ws_out, "void**")
+@export_sig krylov_workspace_create "int" (solver, "KrylovSolverType") (m, "int") (n, "int") (dtype, "KrylovDataType") (device, "KrylovDeviceType") (ws_out, "void**")
 
 Base.@ccallable function krylov_workspace_create(
-    solver_ptr :: Ptr{Cchar},
-    m          :: Cint,
-    n          :: Cint,
-    dtype      :: Cint,
-    device     :: Cint,
-    ws_out     :: Ptr{Ptr{Cvoid}},
+    solver :: Cint,
+    m      :: Cint,
+    n      :: Cint,
+    dtype  :: Cint,
+    device :: Cint,
+    ws_out :: Ptr{Ptr{Cvoid}},
 ) :: Cint
   try
-    _do_create!(unsafe_string(solver_ptr), m, n, dtype, ws_out)
+    _do_create!(solver, m, n, dtype, ws_out)
   catch e
     @error "krylov_workspace_create" exception=e
     Cint(-1)
@@ -68,7 +68,7 @@ end
 #
 # Returns 0 on success, nonzero on error.
 # ---------------------------------------------------------------------------
-@export_sig krylov_solve "int" (ws, "void*") (matvec_A, "KrylovMatvec") (matvec_At, "KrylovMatvec") (matvec_M, "KrylovMatvec") (b, "const void*") (userdata, "void*") (atol, "double") (rtol, "double") (itmax, "int") (verbose, "int")
+@export_sig krylov_solve "int" (ws, "void*") (matvec_A, "KrylovMatvec") (matvec_At, "KrylovMatvec") (matvec_M, "KrylovMatvec") (b, "const void*") (c, "const void*") (userdata, "void*") (atol, "double") (rtol, "double") (itmax, "int") (verbose, "int")
 
 Base.@ccallable function krylov_solve(
     ws_ptr   :: Ptr{Cvoid},
@@ -76,6 +76,7 @@ Base.@ccallable function krylov_solve(
     fptr_At  :: Ptr{Cvoid},
     fptr_M   :: Ptr{Cvoid},
     b_ptr    :: Ptr{Cvoid},
+    c_ptr    :: Ptr{Cvoid},
     userdata :: Ptr{Cvoid},
     atol     :: Cdouble,
     rtol     :: Cdouble,
@@ -83,7 +84,7 @@ Base.@ccallable function krylov_solve(
     verbose  :: Cint,
 ) :: Cint
   try
-    _do_solve!(ws_ptr, fptr_A, fptr_At, fptr_M, b_ptr, userdata, atol, rtol, itmax, verbose)
+    _do_solve!(ws_ptr, fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
   catch e
     @error "krylov_solve" exception=e
     Cint(-1)

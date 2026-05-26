@@ -35,7 +35,7 @@ program basic_cg
   ! -------------------------------------------------------------------------
   ! Create workspace
   ! -------------------------------------------------------------------------
-  ret = krylov_workspace_create("cg"//c_null_char, n, n, &
+  ret = krylov_workspace_create(KRYLOV_CG, n, n, &
                                 KRYLOV_FLOAT64, KRYLOV_CPU, ws)
   if (ret /= 0) then
     write(*,*) "krylov_workspace_create failed:", ret
@@ -49,7 +49,8 @@ program basic_cg
                      c_funloc(matvec_A),  &  ! y = A*x
                      c_null_funptr,       &  ! y = A'*x  (CG doesn't need it)
                      c_null_funptr,       &  ! no preconditioner
-                     c_loc(b),            &  ! right-hand side
+                     c_loc(b),            &  ! right-hand side b (size m)
+                     c_null_ptr,          &  ! c = NULL  (CG only needs one RHS)
                      c_loc(diag),         &  ! userdata: diagonal array
                      1.0d-10, 1.0d-10,   &  ! atol, rtol
                      0_c_int,             &  ! itmax: solver default
