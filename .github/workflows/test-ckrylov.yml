@@ -145,7 +145,7 @@ jobs:
           actual=$(interfaces/C/build/basic_cg)
           echo "$actual"
           echo "$actual" | grep -q "Solved: yes"
-          echo "$actual" | grep -q "x = \[ 1.00  1.00  1.00  1.00  1.00 \]"
+          echo "$actual" | grep -q "x = \[ 1.00 1.00 1.00 1.00 1.00 \]"
 
       # -----------------------------------------------------------------------
       # Build and run the C full test (all 31 solvers)
