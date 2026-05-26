@@ -1,0 +1,151 @@
+name: Release libkrylov binaries
+
+# Triggered by TagBot when it publishes a release.
+# Builds a self-contained libkrylov bundle (library + Julia runtime) for all
+# supported platforms and uploads the archives to the existing GitHub Release.
+#
+# workflow_dispatch lets you re-run or test against any existing tag.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to upload to (e.g. v0.10.6)'
+        required: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label:   linux-x86_64
+            runner:  ubuntu-latest
+            lib:     libkrylov.so
+            archive: libkrylov-linux-x86_64.tar.gz
+
+          - label:   linux-aarch64
+            runner:  ubuntu-24.04-arm
+            lib:     libkrylov.so
+            archive: libkrylov-linux-aarch64.tar.gz
+
+          - label:   macos-arm64
+            runner:  macos-latest
+            lib:     libkrylov.dylib
+            archive: libkrylov-macos-arm64.tar.gz
+
+          - label:   macos-x86_64
+            runner:  macos-15-intel
+            lib:     libkrylov.dylib
+            archive: libkrylov-macos-x86_64.tar.gz
+
+          - label:   windows-x86_64
+            runner:  windows-latest
+            lib:     libkrylov.dll
+            archive: libkrylov-windows-x86_64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+
+      # -----------------------------------------------------------------------
+      # Install JuliaC.jl as a Julia app (provides the juliac CLI)
+      # -----------------------------------------------------------------------
+      - name: Install JuliaC.jl
+        shell: bash
+        run: |
+          julia --startup-file=no -e "
+            import Pkg
+            Pkg.Registry.add(\"General\")
+            Pkg.Apps.add(\"JuliaC\")
+          "
+
+      - name: Add juliac to PATH
+        shell: bash
+        run: |
+          JULIA_BIN=$(julia --startup-file=no -e "print(joinpath(DEPOT_PATH[1], \"bin\"))")
+          echo "$JULIA_BIN" >> "$GITHUB_PATH"
+
+      # -----------------------------------------------------------------------
+      # Instantiate the Krylov.jl project (downloads dependencies)
+      # -----------------------------------------------------------------------
+      - name: Instantiate Julia project
+        shell: bash
+        run: julia --startup-file=no --project=. -e "import Pkg; Pkg.instantiate()"
+
+      # -----------------------------------------------------------------------
+      # Compile libkrylov with JuliaC --bundle
+      #
+      # The bundle layout produced is:
+      #   interfaces/C/build/
+      #   ├── lib/
+      #   │   ├── libkrylov.so   (or .dylib / .dll on Windows: bin/)
+      #   │   └── julia/         (Julia runtime — makes the lib self-contained)
+      #   └── include/           (added by us in the next step)
+      #
+      # On Windows, Julia apps install as .bat files; on Unix, plain binaries.
+      # The output goes to bin/ on Windows (DLL convention) and lib/ elsewhere.
+      # -----------------------------------------------------------------------
+      - name: Build libkrylov
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            JULIAC=juliac.bat
+            OUTDIR=interfaces/C/build/bin
+          else
+            JULIAC=juliac
+            OUTDIR=interfaces/C/build/lib
+          fi
+          $JULIAC \
+            --project . \
+            --compile-ccallable \
+            --trim=safe \
+            --bundle interfaces/C/build \
+            --output-lib "$OUTDIR/${{ matrix.lib }}" \
+            interfaces/C/src/CKrylov.jl
+
+      # -----------------------------------------------------------------------
+      # Generate krylov.h and copy headers into the bundle
+      # -----------------------------------------------------------------------
+      - name: Generate krylov.h
+        shell: bash
+        run: julia --startup-file=no --project=. interfaces/C/scripts/generate_header.jl
+
+      - name: Copy headers into bundle
+        shell: bash
+        run: |
+          mkdir -p interfaces/C/build/include
+          cp interfaces/C/include/krylov.h     interfaces/C/build/include/
+          cp interfaces/Fortran/src/krylov.f90 interfaces/C/build/include/
+
+      # -----------------------------------------------------------------------
+      # Package the bundle
+      # -----------------------------------------------------------------------
+      - name: Package (Unix — tar.gz)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar -czf "${{ matrix.archive }}" -C interfaces/C/build .
+
+      - name: Package (Windows — zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path interfaces/C/build/* -DestinationPath "${{ matrix.archive }}"
+
+      # -----------------------------------------------------------------------
+      # Upload asset to the GitHub Release that TagBot already created.
+      # --clobber lets workflow_dispatch re-runs overwrite existing assets.
+      # -----------------------------------------------------------------------
+      - name: Upload release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=${{ github.event.release.tag_name || inputs.tag }}
+          gh release upload "$TAG" "${{ matrix.archive }}" --clobber

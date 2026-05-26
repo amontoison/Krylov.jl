@@ -1,0 +1,214 @@
+name: Test CKrylov interfaces
+
+# Run on every push/PR that touches the C interface or this workflow.
+on:
+  push:
+    paths:
+      - 'interfaces/**'
+      - 'src/**'
+      - 'Project.toml'
+      - '.github/workflows/test-ckrylov.yml'
+  pull_request:
+    paths:
+      - 'interfaces/**'
+      - 'src/**'
+      - 'Project.toml'
+      - '.github/workflows/test-ckrylov.yml'
+
+jobs:
+  test:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label:   linux-x86_64
+            runner:  ubuntu-latest
+            juliac:  juliac
+            lib:     libkrylov.so
+            libdir:  lib
+            rpath:   -Wl,-rpath,LIBPATH
+
+          - label:   linux-aarch64
+            runner:  ubuntu-24.04-arm
+            juliac:  juliac
+            lib:     libkrylov.so
+            libdir:  lib
+            rpath:   -Wl,-rpath,LIBPATH
+
+          - label:   macos-arm64
+            runner:  macos-latest
+            juliac:  juliac
+            lib:     libkrylov.dylib
+            libdir:  lib
+            rpath:   -Wl,-rpath,LIBPATH
+
+          - label:   macos-x86_64
+            runner:  macos-15-intel
+            juliac:  juliac
+            lib:     libkrylov.dylib
+            libdir:  lib
+            rpath:   -Wl,-rpath,LIBPATH
+
+          - label:   windows-x86_64
+            runner:  windows-latest
+            juliac:  juliac.bat
+            lib:     libkrylov.dll
+            libdir:  bin
+            rpath:   ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+
+      # -----------------------------------------------------------------------
+      # Install JuliaC.jl (provides the juliac CLI)
+      # -----------------------------------------------------------------------
+      - name: Install JuliaC.jl
+        shell: bash
+        run: |
+          julia --startup-file=no -e "
+            import Pkg
+            Pkg.Registry.add(\"General\")
+            Pkg.Apps.add(\"JuliaC\")
+          "
+
+      - name: Add juliac to PATH
+        shell: bash
+        run: |
+          JULIA_BIN=$(julia --startup-file=no -e "print(joinpath(DEPOT_PATH[1], \"bin\"))")
+          echo "$JULIA_BIN" >> "$GITHUB_PATH"
+
+      # -----------------------------------------------------------------------
+      # Instantiate the Krylov.jl project
+      # -----------------------------------------------------------------------
+      - name: Instantiate Julia project
+        shell: bash
+        run: julia --startup-file=no --project=. -e "import Pkg; Pkg.instantiate()"
+
+      # -----------------------------------------------------------------------
+      # Compile libkrylov (no --bundle needed in CI — Julia is on the runner)
+      # -----------------------------------------------------------------------
+      - name: Build libkrylov
+        shell: bash
+        run: |
+          OUTLIB="interfaces/C/build/${{ matrix.libdir }}/${{ matrix.lib }}"
+          mkdir -p "$(dirname "$OUTLIB")"
+          ${{ matrix.juliac }} \
+            --project . \
+            --compile-ccallable \
+            --trim=safe \
+            --output-lib "$OUTLIB" \
+            interfaces/C/src/CKrylov.jl
+
+      # -----------------------------------------------------------------------
+      # Generate the C header
+      # -----------------------------------------------------------------------
+      - name: Generate krylov.h
+        shell: bash
+        run: julia --startup-file=no --project=. interfaces/C/scripts/generate_header.jl
+
+      # -----------------------------------------------------------------------
+      # Run the Julia test suite (all 34 solvers × 4 precisions)
+      # Loads CKrylov.jl as a plain Julia module — no dlopen of libkrylov.so.
+      # Loading a juliac-compiled lib from within Julia would trigger a second
+      # runtime via ijl_adopt_thread and crash; the C/Fortran tests cover the
+      # compiled library from native processes.
+      # -----------------------------------------------------------------------
+      - name: Run Julia tests
+        shell: bash
+        run: |
+          julia --startup-file=no --project=. interfaces/C/test/test_ckrylov.jl
+
+      # -----------------------------------------------------------------------
+      # Build and run the C smoke test (basic_cg example)
+      # -----------------------------------------------------------------------
+      - name: Build C example
+        shell: bash
+        run: |
+          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          RPATH="${{ matrix.rpath }}"
+          RPATH="${RPATH/LIBPATH/$LIBPATH}"
+          gcc -o interfaces/C/build/basic_cg interfaces/C/examples/basic_cg.c \
+              -I interfaces/C/include \
+              "$LIBPATH/${{ matrix.lib }}" \
+              $RPATH
+
+      - name: Run C example
+        shell: bash
+        run: |
+          export PATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}:$PATH"
+          actual=$(interfaces/C/build/basic_cg)
+          echo "$actual"
+          echo "$actual" | grep -q "Solved: yes"
+          echo "$actual" | grep -q "x = \[ 1.00  1.00  1.00  1.00  1.00 \]"
+
+      # -----------------------------------------------------------------------
+      # Build and run the C full test (all 31 solvers)
+      # -----------------------------------------------------------------------
+      - name: Build C test (all solvers)
+        shell: bash
+        run: |
+          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          RPATH="${{ matrix.rpath }}"
+          RPATH="${RPATH/LIBPATH/$LIBPATH}"
+          # -lm is implicit on Windows (CRT), harmless flag on Linux/macOS
+          gcc -O2 -o interfaces/C/build/test_all_solvers \
+              interfaces/C/test/test_all_solvers.c \
+              -I interfaces/C/include \
+              "$LIBPATH/${{ matrix.lib }}" \
+              $RPATH -lm
+
+      - name: Run C test (all solvers)
+        shell: bash
+        run: |
+          export PATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}:$PATH"
+          interfaces/C/build/test_all_solvers
+
+      # -----------------------------------------------------------------------
+      # Build and run the Fortran smoke test (basic_cg example)
+      # -----------------------------------------------------------------------
+      - name: Build Fortran example
+        shell: bash
+        run: |
+          mkdir -p interfaces/Fortran/build
+          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          RPATH="${{ matrix.rpath }}"
+          RPATH="${RPATH/LIBPATH/$LIBPATH}"
+          gfortran -o interfaces/Fortran/build/basic_cg \
+              interfaces/Fortran/examples/basic_cg.f90 \
+              "$LIBPATH/${{ matrix.lib }}" \
+              $RPATH
+
+      - name: Run Fortran example
+        shell: bash
+        run: |
+          export PATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}:$PATH"
+          actual=$(interfaces/Fortran/build/basic_cg)
+          echo "$actual"
+          echo "$actual" | grep -q "Solved: T"
+          echo "$actual" | grep -q "1.00"
+
+      # -----------------------------------------------------------------------
+      # Build and run the Fortran full test (all 31 solvers)
+      # -----------------------------------------------------------------------
+      - name: Build Fortran test (all solvers)
+        shell: bash
+        run: |
+          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          RPATH="${{ matrix.rpath }}"
+          RPATH="${RPATH/LIBPATH/$LIBPATH}"
+          gfortran -O2 -o interfaces/Fortran/build/test_all_solvers \
+              interfaces/Fortran/test/test_all_solvers.f90 \
+              "$LIBPATH/${{ matrix.lib }}" \
+              $RPATH
+
+      - name: Run Fortran test (all solvers)
+        shell: bash
+        run: |
+          export PATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}:$PATH"
+          interfaces/Fortran/build/test_all_solvers
