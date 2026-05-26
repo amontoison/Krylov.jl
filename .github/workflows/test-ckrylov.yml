@@ -29,6 +29,7 @@ jobs:
             lib:     libkrylov.so
             libdir:  lib
             rpath:   -Wl,-rpath,LIBPATH
+            bundle:  ""
 
           - label:   linux-aarch64
             runner:  ubuntu-24.04-arm
@@ -36,6 +37,7 @@ jobs:
             lib:     libkrylov.so
             libdir:  lib
             rpath:   -Wl,-rpath,LIBPATH
+            bundle:  ""
 
           - label:   macos-arm64
             runner:  macos-latest
@@ -43,6 +45,7 @@ jobs:
             lib:     libkrylov.dylib
             libdir:  lib
             rpath:   -Wl,-rpath,LIBPATH
+            bundle:  ""
 
           - label:   macos-x86_64
             runner:  macos-15-intel
@@ -50,6 +53,7 @@ jobs:
             lib:     libkrylov.dylib
             libdir:  lib
             rpath:   -Wl,-rpath,LIBPATH
+            bundle:  ""
 
           - label:   windows-x86_64
             runner:  windows-latest
@@ -57,6 +61,7 @@ jobs:
             lib:     libkrylov.dll
             libdir:  bin
             rpath:   ""
+            bundle:  "--bundle"
 
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +108,10 @@ jobs:
         run: julia --startup-file=no --project=. -e "import Pkg; Pkg.instantiate()"
 
       # -----------------------------------------------------------------------
-      # Compile libkrylov (no --bundle needed in CI — Julia is on the runner)
+      # Compile libkrylov.
+      # Windows requires --bundle (no reliable way to put Julia DLLs in PATH
+      # before the compiled lib is loaded by a standalone C/Fortran process).
+      # Linux/macOS use the system Julia via rpath instead.
       # -----------------------------------------------------------------------
       - name: Build libkrylov
         shell: bash
@@ -114,6 +122,7 @@ jobs:
             --project . \
             --compile-ccallable \
             --trim=safe \
+            ${{ matrix.bundle }} \
             --output-lib "$OUTLIB" \
             interfaces/C/src/CKrylov.jl
 
