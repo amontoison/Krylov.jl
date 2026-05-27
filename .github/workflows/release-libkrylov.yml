@@ -133,15 +133,15 @@ jobs:
       # -----------------------------------------------------------------------
       # Package the bundle
       # -----------------------------------------------------------------------
-      - name: Package (Unix — tar.gz)
+      - name: Package bundle (Unix — tar.gz)
         if: runner.os != 'Windows'
         shell: bash
         run: tar -czf "${{ matrix.archive }}" -C interfaces/C/build .
 
-      - name: Package (Windows — zip)
+      - name: Package bundle (Windows — zip)
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: Compress-Archive -Path interfaces/C/build/* -DestinationPath "${{ matrix.archive }}"
+        shell: bash
+        run: cd interfaces/C/build && zip -r "../../../${{ matrix.archive }}" .
 
       # -----------------------------------------------------------------------
       # Upload asset to the GitHub Release that TagBot already created.
