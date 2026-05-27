@@ -140,8 +140,8 @@ jobs:
 
       - name: Package bundle (Windows — zip)
         if: runner.os == 'Windows'
-        shell: bash
-        run: cd interfaces/C/build && zip -r "../../../${{ matrix.archive }}" .
+        shell: pwsh
+        run: Compress-Archive -Path interfaces/C/build/* -DestinationPath "${{ matrix.archive }}"
 
       # -----------------------------------------------------------------------
       # Upload asset to the GitHub Release that TagBot already created.
