@@ -1,12 +1,11 @@
 # C and Fortran interfaces
 
 !!! warning "Prototype"
-    This interface is still in early development. Not all Krylov.jl features are exposed — in particular, most solver-specific options (restarts, window size, shifts, ...) are not yet accessible. The API may change in future releases.
+    This interface is still in early development. Not all Krylov.jl features are exposed, most solver-specific options (restarts, window size, shifts, ...) are not yet accessible. The API may change in future releases.
 
-Krylov.jl ships `libkrylov`, a native shared library that exposes all its solvers to C, Fortran, Python, R, or any other language that can call C code.
+Krylov.jl ships `libkrylov`, a native shared library that exposes its solvers to C, Fortran, Python, R, or any other language that can call C code.
 
 Pre-built self-contained binaries for Linux (x86-64, aarch64), macOS (arm64, x86-64) and Windows (x86-64) are available on the [Releases](https://github.com/JuliaSmoothOptimizers/Krylov.jl/releases) page.
-For build instructions and the full API reference, see [`interfaces/C/README.md`](https://github.com/JuliaSmoothOptimizers/Krylov.jl/blob/main/interfaces/C/README.md).
 
 ## API overview
 
@@ -18,12 +17,12 @@ The workflow is always the same regardless of the solver:
 4. **Free** the workspace with `krylov_workspace_free`
 
 ```c
-// Callback signature: computes y = A*x, y = Aᴴ*x, or y = M\x
+// Callback signature: computes y = A * x, y = Aᴴ * x, or y = M \ x
 typedef void (*KrylovMatvec)(const void *x, void *y, void *userdata);
 
-int krylov_workspace_create(KrylovSolverType solver,  // KRYLOV_CG, KRYLOV_GMRES, ...
+int krylov_workspace_create(KrylovSolverType solver,   // KRYLOV_CG, KRYLOV_GMRES, ...
                              int m, int n,
-                             KrylovDataType dtype,     // KRYLOV_FLOAT64, ...
+                             KrylovDataType precision, // KRYLOV_FLOAT64, ...
                              KrylovDeviceType device,  // KRYLOV_CPU
                              void **ws_out);
 
@@ -31,7 +30,7 @@ int krylov_solve(void *ws,
                  KrylovMatvec matvec_A,   // required
                  KrylovMatvec matvec_At,  // NULL if not needed
                  KrylovMatvec matvec_M,   // NULL = no preconditioner
-                 const void *b,           // right-hand side (size m)
+                 const void *b,           // right-hand side
                  const void *c,           // second RHS, NULL if not needed
                  void *userdata,
                  double atol, double rtol,
@@ -97,7 +96,7 @@ int main(void)
 
 ## Fortran example
 
-The same problem using the Fortran module (`krylov.f90` included in the bundle):
+The same problem using the Fortran interfaces (`krylov.f90` included in the bundle):
 
 ```fortran
 program basic_cg
