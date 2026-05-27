@@ -8,7 +8,6 @@ Exposes the Krylov.jl solvers as a native shared library (`libkrylov.so`) callab
 |------|---------|
 | Julia | ≥ 1.12 |
 | [JuliaC.jl](https://github.com/JuliaLang/JuliaC.jl) | latest |
-| CMake | ≥ 3.20 (optional) |
 | C compiler | gcc / clang |
 
 [JuliaC.jl](https://github.com/JuliaLang/JuliaC.jl) wraps Julia's `juliac` compiler and adds `--bundle`, which produces a **self-contained** library that embeds the Julia runtime — no separate Julia installation required at runtime.
@@ -60,49 +59,12 @@ interfaces/C/build/
 > **Windows:** use `--output-lib interfaces/C/build/bin/libkrylov.dll`; the bundle lands in `build/bin/`.  
 > **macOS:** replace `.so` with `.dylib` and use `-Wl,-rpath,@loader_path/../lib/julia`.
 
-### Without CMake, without bundle
-
-For a simpler (non-relocatable) build that requires Julia to be installed at runtime:
-
-```bash
-JULIAC=$(julia --startup-file=no -e \
-  "print(joinpath(Sys.BINDIR, \"..\", \"share\", \"julia\", \"juliac\", \"juliac.jl\"))")
-
-julia --startup-file=no --project=. "$JULIAC" \
-    --compile-ccallable \
-    --experimental --trim=safe \
-    --output-lib interfaces/C/build/libkrylov.so \
-    interfaces/C/src/LibKrylov.jl
-
-julia --startup-file=no --project=. interfaces/C/scripts/generate_header.jl
-
-gcc -o basic_cg interfaces/C/examples/basic_cg.c \
-    -I interfaces/C/include \
-    interfaces/C/build/libkrylov.so \
-    -Wl,-rpath,$(pwd)/interfaces/C/build
-```
-
-**Output sizes** (Linux x86-64, all 34 solvers × 4 precisions):
+**Output sizes** (Linux x86-64, all solvers × 4 precisions):
 
 | Build | Size |
 |-------|------|
 | No trim | ~269 MB |
 | `--trim=safe` | ~19 MB |
-
-### With CMake
-
-```bash
-cd interfaces/C
-mkdir build && cd build
-cmake ..
-make
-```
-
-CMake automatically:
-1. Locates `julia` and `juliac.jl`
-2. Runs `juliac --compile-ccallable --trim=safe` to produce `libkrylov.so`
-3. Generates `include/krylov.h`
-4. Compiles the example executables
 
 ## Run the examples
 
@@ -202,6 +164,5 @@ interfaces/C/
 │   └── krylov.h            # generated — do not edit by hand
 ├── examples/
 │   └── basic_cg.c          # CG on tridiag(-1,2,-1)
-├── CMakeLists.txt
 └── README.md
 ```
