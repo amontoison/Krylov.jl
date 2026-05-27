@@ -1,4 +1,4 @@
-# Enumerators for the CKrylov C interface.
+# Enumerators for the LibKrylov C interface.
 # Must match the values declared in krylov.h.
 #
 # GC roots are now managed by the typed store dicts in c_stores.jl.

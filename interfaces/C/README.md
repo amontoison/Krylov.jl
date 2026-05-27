@@ -1,4 +1,4 @@
-# CKrylov — C interface for Krylov.jl
+# LibKrylov — C interface for Krylov.jl
 
 Exposes the Krylov.jl solvers as a native shared library (`libkrylov.so`) callable from C (and any language with a C FFI).
 
@@ -31,7 +31,7 @@ juliac \
     --trim=safe \
     --bundle interfaces/C/build \
     --output-lib interfaces/C/build/lib/libkrylov.so \
-    interfaces/C/src/CKrylov.jl
+    interfaces/C/src/LibKrylov.jl
 
 # Generate the C header
 julia --startup-file=no --project=. interfaces/C/scripts/generate_header.jl
@@ -72,7 +72,7 @@ julia --startup-file=no --project=. "$JULIAC" \
     --compile-ccallable \
     --experimental --trim=safe \
     --output-lib interfaces/C/build/libkrylov.so \
-    interfaces/C/src/CKrylov.jl
+    interfaces/C/src/LibKrylov.jl
 
 julia --startup-file=no --project=. interfaces/C/scripts/generate_header.jl
 
@@ -121,18 +121,19 @@ CMake automatically:
 typedef void (*KrylovMatvec)(const void *x, void *y, void *userdata);
 
 /* 1. Create a workspace for a named solver */
-int krylov_workspace_create(const char *solver,   /* "cg", "gmres", "lsqr", ... */
-                             int m, int n,          /* operator dimensions        */
-                             int dtype,             /* KrylovDataType enum        */
-                             int device,            /* KrylovDevice enum          */
-                             void **ws_out);        /* receives the handle        */
+int krylov_workspace_create(KrylovSolverType solver, /* KRYLOV_CG, KRYLOV_GMRES, ...  */
+                             int m, int n,             /* operator dimensions           */
+                             KrylovDataType dtype,     /* KRYLOV_FLOAT64, ...           */
+                             KrylovDeviceType device,  /* KRYLOV_CPU                    */
+                             void **ws_out);           /* receives the handle           */
 
 /* 2. Solve */
 int krylov_solve(void *ws,
                  KrylovMatvec matvec_A,   /* y = A*x  (required)               */
-                 KrylovMatvec matvec_At,  /* y = A'*x (NULL for CG/GMRES/...)  */
+                 KrylovMatvec matvec_At,  /* y = A'*x (NULL if not needed)     */
                  KrylovMatvec matvec_M,   /* y = M\x  (NULL = no precond.)     */
-                 const void *b,           /* right-hand side                   */
+                 const void *b,           /* right-hand side (size m)          */
+                 const void *c,           /* second RHS (NULL if not needed)   */
                  void *userdata,          /* forwarded to every callback        */
                  double atol, double rtol,
                  int itmax,              /* 0 = solver default                 */
@@ -158,14 +159,14 @@ int krylov_workspace_free(void *ws);
 typedef enum { KRYLOV_FLOAT32=0, KRYLOV_FLOAT64=1,
                KRYLOV_COMPLEX32=2, KRYLOV_COMPLEX64=3 } KrylovDataType;
 
-typedef enum { KRYLOV_CPU=0 } KrylovDevice;
+typedef enum { KRYLOV_CPU=0 } KrylovDeviceType;
 ```
 
 ### Which solvers need `matvec_At`?
 
 | Pass `NULL` | Pass a callback |
 |-------------|----------------|
-| CG, CR, MINRES, MINRES-QLP, SYMMLQ, GMRES, FGMRES, FOM, DIOM, DQGMRES, BiCGSTAB, CGS, BiLQ, QMR, TriCG, TriMR, GPMR | LSQR, LSMR, LSLQ, CGLS, CRLS, CGNE, CRMR, CRAIG, CRAIGMR, LNLQ, BiLQR, TriLQR, USYMLQ, USYMQR, USYMLQR |
+| CG, CR, MINRES, MINRES-QLP, SYMMLQ, GMRES, FGMRES, FOM, DIOM, DQGMRES, BiCGSTAB, CGS, CAR, MINARES, TriCG, TriMR, GPMR | BiLQ, QMR, BiLQR, TriLQR, USYMLQ, USYMQR, USYMLQR, LSLQ, LSQR, LSMR, CGLS, CRLS, CGNE, CRMR, CRAIG, CRAIGMR, LNLQ |
 
 ### Minimal example (CG, double precision)
 
@@ -178,8 +179,8 @@ static void my_matvec(const void *x, void *y, void *data) {
 
 int main(void) {
     void *ws = NULL;
-    krylov_workspace_create("cg", n, n, KRYLOV_FLOAT64, KRYLOV_CPU, &ws);
-    krylov_solve(ws, my_matvec, NULL, NULL, b, userdata, 1e-10, 1e-10, 0, 0);
+    krylov_workspace_create(KRYLOV_CG, n, n, KRYLOV_FLOAT64, KRYLOV_CPU, &ws);
+    krylov_solve(ws, my_matvec, NULL, NULL, b, NULL, NULL, 1e-10, 1e-10, 0, 0);
     krylov_get_x(ws, x, n);
     krylov_workspace_free(ws);
 }
@@ -190,7 +191,7 @@ int main(void) {
 ```
 interfaces/C/
 ├── src/
-│   ├── CKrylov.jl          # @ccallable functions (compiled by juliac)
+│   ├── LibKrylov.jl          # @ccallable functions (compiled by juliac)
 │   ├── c_enums.jl          # KrylovDataType / KrylovDevice enum comments
 │   ├── c_operator.jl       # COperator: C callback → Julia mul! operator
 │   └── c_stores.jl         # AUTO-GENERATED — 136 typed workspace stores

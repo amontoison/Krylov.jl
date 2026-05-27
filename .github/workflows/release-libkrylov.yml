@@ -114,7 +114,7 @@ jobs:
             --trim=safe \
             --bundle interfaces/C/build \
             --output-lib "$OUTLIB" \
-            interfaces/C/src/CKrylov.jl
+            interfaces/C/src/LibKrylov.jl
 
       # -----------------------------------------------------------------------
       # Generate krylov.h and copy headers into the bundle

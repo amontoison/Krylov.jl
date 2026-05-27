@@ -1,15 +1,15 @@
 #!/usr/bin/env julia
-# Generate interfaces/C/include/krylov.h from the function_sigs table in CKrylov.jl
+# Generate interfaces/C/include/krylov.h from the function_sigs table in LibKrylov.jl
 # and the SOLVERS table in generate_stores.jl (single source of truth).
 # Usage:  julia scripts/generate_header.jl
 
 using Krylov
 
 include(joinpath(@__DIR__, "solver_table.jl"))
-include(joinpath(@__DIR__, "..", "src", "CKrylov.jl"))
+include(joinpath(@__DIR__, "..", "src", "LibKrylov.jl"))
 
-# Grab the signature table that CKrylov.jl populated inside its module
-function_sigs = CKrylov.function_sigs
+# Grab the signature table that LibKrylov.jl populated inside its module
+function_sigs = LibKrylov.function_sigs
 
 # ---------------------------------------------------------------------------
 # Build KrylovSolverType enum entries from solver_table.jl (single source of truth)

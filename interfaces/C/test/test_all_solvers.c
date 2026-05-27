@@ -1,8 +1,5 @@
 /*
- * test_all_solvers.c — test all 31 solvers accessible via the CKrylov C interface.
- *
- * Excluded: gpmr (needs two distinct operators A and B),
- *           cg_lanczos_shift, cgls_lanczos_shift (shift-vector interface).
+ * test_all_solvers.c — tests all solvers accessible via the libkrylov C interface.
  *
  * Two test problems (n x n dense matrices stored as flat arrays):
  *   SPD:    A = tridiag(-1, 2, -1),  b = A * ones,  x_true = ones

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(CKrylov C)
+project(LibKrylov C)
 
 # ---------------------------------------------------------------------------
 # Find Julia and juliac
@@ -31,13 +31,13 @@ message(STATUS "juliac: ${JULIAC_SCRIPT}")
 # Paths
 # ---------------------------------------------------------------------------
 set(KRYLOV_ROOT    ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-set(CKRYLOV_SRC  ${CMAKE_CURRENT_SOURCE_DIR}/src/CKrylov.jl)
+set(CKRYLOV_SRC  ${CMAKE_CURRENT_SOURCE_DIR}/src/LibKrylov.jl)
 set(HEADER_SCRIPT  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_header.jl)
 set(INCLUDE_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(HEADER_OUT     ${INCLUDE_DIR}/krylov.h)
 
 # ---------------------------------------------------------------------------
-# Shared library:  CKrylov.so / CKrylov.dll
+# Shared library:  LibKrylov.so / LibKrylov.dll
 # ---------------------------------------------------------------------------
 # juliac compiles every @ccallable function into a native shared library.
 # --compile-ccallable  : export all Base.@ccallable functions
@@ -60,7 +60,7 @@ add_custom_command(
   VERBATIM
 )
 
-add_custom_target(CKrylov_target ALL
+add_custom_target(LibKrylov_target ALL
   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libkrylov${CMAKE_SHARED_LIBRARY_SUFFIX}
 )
 
@@ -70,7 +70,7 @@ set_target_properties(krylov PROPERTIES
   IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/libkrylov${CMAKE_SHARED_LIBRARY_SUFFIX}
   INTERFACE_INCLUDE_DIRECTORIES ${INCLUDE_DIR}
 )
-add_dependencies(krylov CKrylov_target)
+add_dependencies(krylov LibKrylov_target)
 
 # ---------------------------------------------------------------------------
 # Auto-generate krylov.h after the library is built

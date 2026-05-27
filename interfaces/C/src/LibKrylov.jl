@@ -1,4 +1,4 @@
-module CKrylov
+module LibKrylov
 
 using LinearAlgebra
 using Krylov
@@ -175,4 +175,4 @@ Base.@ccallable function krylov_workspace_free(ws_ptr :: Ptr{Cvoid}) :: Cint
   _do_free!(ws_ptr)
 end
 
-end  # module CKrylov
+end  # module LibKrylov

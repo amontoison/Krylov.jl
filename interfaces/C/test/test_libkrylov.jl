@@ -1,4 +1,4 @@
-# test_ckrylov.jl — validates the C interface logic by loading CKrylov.jl as a
+# test_libkrylov.jl — validates the C interface logic by loading LibKrylov.jl as a
 # regular Julia module and calling its @ccallable functions directly.
 #
 # This avoids loading the juliac-compiled libkrylov.so from within a Julia
@@ -10,7 +10,7 @@
 # C/Fortran process with no prior Julia runtime.
 #
 # Usage (from the Krylov.jl root):
-#   julia --startup-file=no --project=. interfaces/C/test/test_ckrylov.jl
+#   julia --startup-file=no --project=. interfaces/C/test/test_libkrylov.jl
 
 using Test
 using LinearAlgebra
@@ -20,25 +20,25 @@ using Krylov
 const RNG = MersenneTwister(42)
 
 # ============================================================================
-# Load CKrylov as a plain Julia module (no dlopen)
+# Load LibKrylov as a plain Julia module (no dlopen)
 # ============================================================================
 
-# Load the CKrylov module sources directly (no dlopen, no juliac-compiled lib)
-include(joinpath(@__DIR__, "..", "src", "CKrylov.jl"))
-using .CKrylov
+# Load the LibKrylov module sources directly (no dlopen, no juliac-compiled lib)
+include(joinpath(@__DIR__, "..", "src", "LibKrylov.jl"))
+using .LibKrylov
 
 # Include the solver table to get the SOLVERS list for generating enum constants
 include(joinpath(@__DIR__, "..", "scripts", "solver_table.jl"))
 
 # Bring the @ccallable entry points into scope as plain Julia functions
-const krylov_workspace_create = CKrylov.krylov_workspace_create
-const krylov_workspace_free   = CKrylov.krylov_workspace_free
-const krylov_solve            = CKrylov.krylov_solve
-const krylov_get_x            = CKrylov.krylov_get_x
-const krylov_get_y            = CKrylov.krylov_get_y
-const krylov_warm_start       = CKrylov.krylov_warm_start
-const krylov_is_solved        = CKrylov.krylov_is_solved
-const krylov_niter            = CKrylov.krylov_niter
+const krylov_workspace_create = LibKrylov.krylov_workspace_create
+const krylov_workspace_free   = LibKrylov.krylov_workspace_free
+const krylov_solve            = LibKrylov.krylov_solve
+const krylov_get_x            = LibKrylov.krylov_get_x
+const krylov_get_y            = LibKrylov.krylov_get_y
+const krylov_warm_start       = LibKrylov.krylov_warm_start
+const krylov_is_solved        = LibKrylov.krylov_is_solved
+const krylov_niter            = LibKrylov.krylov_niter
 
 # ============================================================================
 # Enums (must match krylov.h / solver_table.jl)
@@ -377,7 +377,7 @@ end
 # Run all tests
 # ============================================================================
 
-@testset "CKrylov C interface" begin
+@testset "LibKrylov C interface" begin
     @testset "$T" for T in (Float32, Float64, ComplexF32, ComplexF64)
         @testset "$solver" for solver in ALL_SOLVERS
             test_solver(solver, T)

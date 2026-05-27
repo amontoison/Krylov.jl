@@ -1,4 +1,4 @@
-# solver_table.jl — single source of truth for the CKrylov solver list.
+# solver_table.jl — single source of truth for the LibKrylov solver list.
 # Included by both generate_stores.jl and generate_header.jl.
 #
 # Each entry: (c_name, workspace_type_name, enum_constant)

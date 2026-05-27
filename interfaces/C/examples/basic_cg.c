@@ -3,7 +3,7 @@
  *
  * A = tridiag(-1, 2, -1),  b = [1, 0, 0, 0, 1]^T
  *
- * Compile (after building libCKrylov.so with CMake):
+ * Compile (after building libkrylov with CMake):
  *
  *   gcc -o basic_cg basic_cg.c -I../include -L../build -lkrylov -Wl,-rpath,../build
  *

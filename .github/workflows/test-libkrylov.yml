@@ -1,4 +1,4 @@
-name: Test CKrylov interfaces
+name: Test LibKrylov interfaces
 
 # Run on every push/PR that touches the C interface or this workflow.
 on:
@@ -7,13 +7,13 @@ on:
       - 'interfaces/**'
       - 'src/**'
       - 'Project.toml'
-      - '.github/workflows/test-ckrylov.yml'
+      - '.github/workflows/test-libkrylov.yml'
   pull_request:
     paths:
       - 'interfaces/**'
       - 'src/**'
       - 'Project.toml'
-      - '.github/workflows/test-ckrylov.yml'
+      - '.github/workflows/test-libkrylov.yml'
 
 jobs:
   test:
@@ -111,7 +111,7 @@ jobs:
             --trim=safe \
             --bundle interfaces/C/build \
             --output-lib "$OUTLIB" \
-            interfaces/C/src/CKrylov.jl
+            interfaces/C/src/LibKrylov.jl
 
       # -----------------------------------------------------------------------
       # Generate the C header
@@ -122,7 +122,7 @@ jobs:
 
       # -----------------------------------------------------------------------
       # Run the Julia test suite (all 34 solvers × 4 precisions)
-      # Loads CKrylov.jl as a plain Julia module — no dlopen of libkrylov.so.
+      # Loads LibKrylov.jl as a plain Julia module — no dlopen of libkrylov.so.
       # Loading a juliac-compiled lib from within Julia would trigger a second
       # runtime via ijl_adopt_thread and crash; the C/Fortran tests cover the
       # compiled library from native processes.
@@ -130,7 +130,7 @@ jobs:
       - name: Run Julia tests
         shell: bash
         run: |
-          julia --startup-file=no --project=. interfaces/C/test/test_ckrylov.jl
+          julia --startup-file=no --project=. interfaces/C/test/test_libkrylov.jl
 
       # -----------------------------------------------------------------------
       # Build and run the C smoke test (basic_cg example)
@@ -156,7 +156,7 @@ jobs:
           echo "$actual" | grep -q "x = \[ 1.00 1.00 1.00 1.00 1.00 \]"
 
       # -----------------------------------------------------------------------
-      # Build and run the C full test (all 31 solvers)
+      # Build and run the C full test (all solvers)
       # -----------------------------------------------------------------------
       - name: Build C test (all solvers)
         shell: bash
@@ -203,7 +203,7 @@ jobs:
           echo "$actual" | grep -q "1.00"
 
       # -----------------------------------------------------------------------
-      # Build and run the Fortran full test (all 31 solvers)
+      # Build and run the Fortran full test (all solvers)
       # -----------------------------------------------------------------------
       - name: Build Fortran test (all solvers)
         shell: bash

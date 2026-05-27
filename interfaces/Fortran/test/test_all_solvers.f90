@@ -1,10 +1,7 @@
-! test_all_solvers.f90 — test all 31 solvers accessible via the Fortran interface.
-!
-! Excluded: gpmr (two distinct operators A and B),
-!           cg_lanczos_shift, cgls_lanczos_shift (shift-vector interface).
+! test_all_solvers.f90 — tests all solvers accessible via the Fortran interface.
 !
 ! Three problem families (Float64 only; the C layer is tested for all precisions
-! in test_ckrylov.jl):
+! in test_libkrylov.jl):
 !   SPD    : A = tridiag(-1, 2, -1),  b = A * ones,  x_true = ones
 !   NONSYM : A = tridiag(-1, n, -1),  b = A * ones,  x_true = ones
 !   LS     : A = tridiag(-1, n, -1) rectangular m x n,  b = A * ones
