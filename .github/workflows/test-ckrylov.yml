@@ -28,40 +28,30 @@ jobs:
             juliac:  juliac
             lib:     libkrylov.so
             libdir:  lib
-            rpath:   -Wl,-rpath,LIBPATH
-            bundle:  ""
 
           - label:   linux-aarch64
             runner:  ubuntu-24.04-arm
             juliac:  juliac
             lib:     libkrylov.so
             libdir:  lib
-            rpath:   -Wl,-rpath,LIBPATH
-            bundle:  ""
 
           - label:   macos-arm64
             runner:  macos-latest
             juliac:  juliac
             lib:     libkrylov.dylib
             libdir:  lib
-            rpath:   -Wl,-rpath,LIBPATH
-            bundle:  ""
 
           - label:   macos-x86_64
             runner:  macos-15-intel
             juliac:  juliac
             lib:     libkrylov.dylib
             libdir:  lib
-            rpath:   -Wl,-rpath,LIBPATH
-            bundle:  ""
 
           - label:   windows-x86_64
             runner:  windows-latest
             juliac:  juliac.bat
             lib:     libkrylov.dll
             libdir:  bin
-            rpath:   ""
-            bundle:  "--bundle"
 
     steps:
       - uses: actions/checkout@v4
@@ -92,13 +82,11 @@ jobs:
             Pkg.Apps.add(\"JuliaC\")
           "
 
-      - name: Add juliac and Julia runtime to PATH
+      - name: Add juliac to PATH
         shell: bash
         run: |
           JULIAC_BIN=$(julia --startup-file=no -e "print(joinpath(DEPOT_PATH[1], \"bin\"))")
-          JULIA_BIN=$(julia --startup-file=no -e "print(Sys.BINDIR)")
           echo "$JULIAC_BIN" >> "$GITHUB_PATH"
-          echo "$JULIA_BIN" >> "$GITHUB_PATH"
 
       # -----------------------------------------------------------------------
       # Instantiate the Krylov.jl project
@@ -108,10 +96,9 @@ jobs:
         run: julia --startup-file=no --project=. -e "import Pkg; Pkg.instantiate()"
 
       # -----------------------------------------------------------------------
-      # Compile libkrylov.
-      # Windows requires --bundle (no reliable way to put Julia DLLs in PATH
-      # before the compiled lib is loaded by a standalone C/Fortran process).
-      # Linux/macOS use the system Julia via rpath instead.
+      # Compile libkrylov with --bundle so the library is fully self-contained
+      # (Julia runtime bundled alongside) and dlopen works without any system
+      # Julia in PATH on all platforms.
       # -----------------------------------------------------------------------
       - name: Build libkrylov
         shell: bash
@@ -122,7 +109,7 @@ jobs:
             --project . \
             --compile-ccallable \
             --trim=safe \
-            ${{ matrix.bundle }} \
+            --bundle interfaces/C/build \
             --output-lib "$OUTLIB" \
             interfaces/C/src/CKrylov.jl
 
@@ -152,12 +139,9 @@ jobs:
         shell: bash
         run: |
           LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
-          RPATH="${{ matrix.rpath }}"
-          RPATH="${RPATH/LIBPATH/$LIBPATH}"
           gcc -o interfaces/C/build/basic_cg interfaces/C/examples/basic_cg.c \
               -I interfaces/C/include \
-              "$LIBPATH/${{ matrix.lib }}" \
-              $RPATH
+              "$LIBPATH/${{ matrix.lib }}"
 
       - name: Run C example
         shell: bash
@@ -175,14 +159,12 @@ jobs:
         shell: bash
         run: |
           LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
-          RPATH="${{ matrix.rpath }}"
-          RPATH="${RPATH/LIBPATH/$LIBPATH}"
           # -lm is implicit on Windows (CRT), harmless flag on Linux/macOS
           gcc -O2 -o interfaces/C/build/test_all_solvers \
               interfaces/C/test/test_all_solvers.c \
               -I interfaces/C/include \
               "$LIBPATH/${{ matrix.lib }}" \
-              $RPATH -lm
+              -lm
 
       - name: Run C test (all solvers)
         shell: bash
@@ -198,12 +180,9 @@ jobs:
         run: |
           mkdir -p interfaces/Fortran/build
           LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
-          RPATH="${{ matrix.rpath }}"
-          RPATH="${RPATH/LIBPATH/$LIBPATH}"
           gfortran -o interfaces/Fortran/build/basic_cg \
               interfaces/Fortran/examples/basic_cg.f90 \
-              "$LIBPATH/${{ matrix.lib }}" \
-              $RPATH
+              "$LIBPATH/${{ matrix.lib }}"
 
       - name: Run Fortran example
         shell: bash
@@ -221,12 +200,9 @@ jobs:
         shell: bash
         run: |
           LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
-          RPATH="${{ matrix.rpath }}"
-          RPATH="${RPATH/LIBPATH/$LIBPATH}"
           gfortran -O2 -o interfaces/Fortran/build/test_all_solvers \
               interfaces/Fortran/test/test_all_solvers.f90 \
-              "$LIBPATH/${{ matrix.lib }}" \
-              $RPATH
+              "$LIBPATH/${{ matrix.lib }}"
 
       - name: Run Fortran test (all solvers)
         shell: bash

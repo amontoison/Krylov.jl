@@ -25,27 +25,37 @@ jobs:
         include:
           - label:   linux-x86_64
             runner:  ubuntu-latest
+            juliac:  juliac
             lib:     libkrylov.so
+            libdir:  lib
             archive: libkrylov-linux-x86_64.tar.gz
 
           - label:   linux-aarch64
             runner:  ubuntu-24.04-arm
+            juliac:  juliac
             lib:     libkrylov.so
+            libdir:  lib
             archive: libkrylov-linux-aarch64.tar.gz
 
           - label:   macos-arm64
             runner:  macos-latest
+            juliac:  juliac
             lib:     libkrylov.dylib
+            libdir:  lib
             archive: libkrylov-macos-arm64.tar.gz
 
           - label:   macos-x86_64
             runner:  macos-15-intel
+            juliac:  juliac
             lib:     libkrylov.dylib
+            libdir:  lib
             archive: libkrylov-macos-x86_64.tar.gz
 
           - label:   windows-x86_64
             runner:  windows-latest
+            juliac:  juliac.bat
             lib:     libkrylov.dll
+            libdir:  bin
             archive: libkrylov-windows-x86_64.zip
 
     steps:
@@ -70,8 +80,8 @@ jobs:
       - name: Add juliac to PATH
         shell: bash
         run: |
-          JULIA_BIN=$(julia --startup-file=no -e "print(joinpath(DEPOT_PATH[1], \"bin\"))")
-          echo "$JULIA_BIN" >> "$GITHUB_PATH"
+          JULIAC_BIN=$(julia --startup-file=no -e "print(joinpath(DEPOT_PATH[1], \"bin\"))")
+          echo "$JULIAC_BIN" >> "$GITHUB_PATH"
 
       # -----------------------------------------------------------------------
       # Instantiate the Krylov.jl project (downloads dependencies)
@@ -85,30 +95,25 @@ jobs:
       #
       # The bundle layout produced is:
       #   interfaces/C/build/
-      #   ├── lib/
-      #   │   ├── libkrylov.so   (or .dylib / .dll on Windows: bin/)
-      #   │   └── julia/         (Julia runtime — makes the lib self-contained)
-      #   └── include/           (added by us in the next step)
-      #
-      # On Windows, Julia apps install as .bat files; on Unix, plain binaries.
-      # The output goes to bin/ on Windows (DLL convention) and lib/ elsewhere.
+      #   ├── lib/                       (Unix)
+      #   │   ├── libkrylov.so / .dylib
+      #   │   └── julia/
+      #   ├── bin/                       (Windows)
+      #   │   ├── libkrylov.dll
+      #   │   └── julia/
+      #   └── include/                   (added by us in the next step)
       # -----------------------------------------------------------------------
       - name: Build libkrylov
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            JULIAC=juliac.bat
-            OUTDIR=interfaces/C/build/bin
-          else
-            JULIAC=juliac
-            OUTDIR=interfaces/C/build/lib
-          fi
-          $JULIAC \
+          OUTLIB="interfaces/C/build/${{ matrix.libdir }}/${{ matrix.lib }}"
+          mkdir -p "$(dirname "$OUTLIB")"
+          ${{ matrix.juliac }} \
             --project . \
             --compile-ccallable \
             --trim=safe \
             --bundle interfaces/C/build \
-            --output-lib "$OUTDIR/${{ matrix.lib }}" \
+            --output-lib "$OUTLIB" \
             interfaces/C/src/CKrylov.jl
 
       # -----------------------------------------------------------------------
