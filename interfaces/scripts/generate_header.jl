@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
-# Generate interfaces/C/include/krylov.h from the function_sigs table in LibKrylov.jl
+# Generate interfaces/include/krylov.h from the function_sigs table in LibKrylov.jl
 # and the SOLVERS table in generate_stores.jl (single source of truth).
-# Usage:  julia scripts/generate_header.jl
+# Usage:  julia interfaces/scripts/generate_header.jl
 
 using Krylov
 

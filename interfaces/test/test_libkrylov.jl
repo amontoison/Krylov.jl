@@ -10,7 +10,7 @@
 # C/Fortran process with no prior Julia runtime.
 #
 # Usage (from the Krylov.jl root):
-#   julia --startup-file=no --project=. interfaces/C/test/test_libkrylov.jl
+#   julia --startup-file=no --project=. interfaces/test/test_libkrylov.jl
 
 using Test
 using LinearAlgebra
@@ -27,7 +27,7 @@ const RNG = MersenneTwister(42)
 include(joinpath(@__DIR__, "..", "src", "LibKrylov.jl"))
 using .LibKrylov
 
-# Include the solver table to get the SOLVERS list for generating enum constants
+# Include the solver table to get the SOLVERS list
 include(joinpath(@__DIR__, "..", "scripts", "solver_table.jl"))
 
 # Bring the @ccallable entry points into scope as plain Julia functions

@@ -1,6 +1,6 @@
-# LibKrylov — C interface for Krylov.jl
+# LibKrylov — C and Fortran interface for Krylov.jl
 
-Exposes the Krylov.jl solvers as a native shared library (`libkrylov.so`) callable from C (and any language with a C FFI).
+Exposes the Krylov.jl solvers as a native shared library (`libkrylov.so`) callable from C, Fortran, and any language with a C FFI.
 
 ## Requirements
 
@@ -28,26 +28,26 @@ juliac \
     --project . \
     --compile-ccallable \
     --trim=safe \
-    --bundle interfaces/C/build \
-    --output-lib interfaces/C/build/lib/libkrylov.so \
-    interfaces/C/src/LibKrylov.jl
+    --bundle interfaces/build \
+    --output-lib interfaces/build/lib/libkrylov.so \
+    interfaces/src/LibKrylov.jl
 
 # Generate the C header
-julia --startup-file=no --project=. interfaces/C/scripts/generate_header.jl
-cp interfaces/C/include/krylov.h     interfaces/C/build/include/
-cp interfaces/Fortran/src/krylov.f90 interfaces/C/build/include/
+julia --startup-file=no --project=. interfaces/scripts/generate_header.jl
+cp interfaces/include/krylov.h   interfaces/build/include/
+cp interfaces/include/krylov.f90 interfaces/build/include/
 
-# Compile an example
-gcc -o basic_cg interfaces/C/examples/basic_cg.c \
-    -I interfaces/C/build/include \
-    interfaces/C/build/lib/libkrylov.so \
+# Compile a C example
+gcc -o basic_cg interfaces/examples/C/basic_cg.c \
+    -I interfaces/build/include \
+    interfaces/build/lib/libkrylov.so \
     -Wl,-rpath,'$ORIGIN/../lib/julia'
 ```
 
 The `--bundle` flag produces a **relocatable** directory:
 
 ```
-interfaces/C/build/
+interfaces/build/
 ├── lib/
 │   ├── libkrylov.so     ← the library
 │   └── julia/           ← embedded Julia runtime (no system Julia needed)
@@ -56,7 +56,7 @@ interfaces/C/build/
     └── krylov.f90
 ```
 
-> **Windows:** use `--output-lib interfaces/C/build/bin/libkrylov.dll`; the bundle lands in `build/bin/`.  
+> **Windows:** use `--output-lib interfaces/build/bin/libkrylov.dll`; the bundle lands in `build/bin/`.  
 > **macOS:** replace `.so` with `.dylib` and use `-Wl,-rpath,@loader_path/../lib/julia`.
 
 **Output sizes** (Linux x86-64, all solvers × 4 precisions):
@@ -151,18 +151,29 @@ int main(void) {
 ## Directory structure
 
 ```
-interfaces/C/
+interfaces/
 ├── src/
 │   ├── LibKrylov.jl          # @ccallable functions (compiled by juliac)
-│   ├── c_enums.jl          # KrylovDataType / KrylovDevice enum comments
-│   ├── c_operator.jl       # COperator: C callback → Julia mul! operator
-│   └── c_stores.jl         # AUTO-GENERATED — 136 typed workspace stores
+│   ├── c_enums.jl            # KrylovDataType / KrylovDeviceType enum helpers
+│   ├── c_operator.jl         # COperator: C callback → Julia mul! operator
+│   └── c_stores.jl           # AUTO-GENERATED — typed workspace stores
 ├── scripts/
-│   ├── generate_header.jl  # generates include/krylov.h
-│   └── generate_stores.jl  # regenerates src/c_stores.jl (run when adding solvers)
+│   ├── generate_header.jl    # generates include/krylov.h
+│   ├── generate_stores.jl    # regenerates src/c_stores.jl (run when adding solvers)
+│   └── solver_table.jl       # single source of truth for solver list
 ├── include/
-│   └── krylov.h            # generated — do not edit by hand
+│   ├── krylov.h              # generated C header — do not edit by hand
+│   └── krylov.f90            # Fortran bindings
 ├── examples/
-│   └── basic_cg.c          # CG on tridiag(-1,2,-1)
+│   ├── C/
+│   │   └── basic_cg.c        # CG on tridiag(-1,2,-1)
+│   └── Fortran/
+│       └── basic_cg.f90
+├── test/
+│   ├── test_libkrylov.jl     # Julia unit tests (no dlopen)
+│   ├── C/
+│   │   └── test_all_solvers.c
+│   └── Fortran/
+│       └── test_all_solvers.f90
 └── README.md
 ```

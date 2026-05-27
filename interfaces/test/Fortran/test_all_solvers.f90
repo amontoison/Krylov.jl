@@ -7,15 +7,15 @@
 !   LS     : A = tridiag(-1, n, -1) rectangular m x n,  b = A * ones
 !
 ! Compile (after building libkrylov):
-!   gfortran -O2 -o test_all_solvers test_all_solvers.f90 \
-!       -L<build>/lib -lkrylov -Wl,-rpath,<build>/lib
+!   gfortran -O2 -o test_all_solvers interfaces/test/Fortran/test_all_solvers.f90 \
+!       interfaces/build/lib/libkrylov.so
 !
 ! Exit code: 0 if all tests pass, 1 otherwise.
 
 program test_all_solvers
   use iso_c_binding
   implicit none
-  include '../src/krylov.f90'
+  include '../../include/krylov.f90'
 
   integer, parameter :: N = 20
   integer, parameter :: M = 30

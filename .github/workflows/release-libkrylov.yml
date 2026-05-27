@@ -106,29 +106,29 @@ jobs:
       - name: Build libkrylov
         shell: bash
         run: |
-          OUTLIB="interfaces/C/build/${{ matrix.libdir }}/${{ matrix.lib }}"
+          OUTLIB="interfaces/build/${{ matrix.libdir }}/${{ matrix.lib }}"
           mkdir -p "$(dirname "$OUTLIB")"
           ${{ matrix.juliac }} \
             --project . \
             --compile-ccallable \
             --trim=safe \
-            --bundle interfaces/C/build \
+            --bundle interfaces/build \
             --output-lib "$OUTLIB" \
-            interfaces/C/src/LibKrylov.jl
+            interfaces/src/LibKrylov.jl
 
       # -----------------------------------------------------------------------
       # Generate krylov.h and copy headers into the bundle
       # -----------------------------------------------------------------------
       - name: Generate krylov.h
         shell: bash
-        run: julia --startup-file=no --project=. interfaces/C/scripts/generate_header.jl
+        run: julia --startup-file=no --project=. interfaces/scripts/generate_header.jl
 
       - name: Copy headers into bundle
         shell: bash
         run: |
-          mkdir -p interfaces/C/build/include
-          cp interfaces/C/include/krylov.h     interfaces/C/build/include/
-          cp interfaces/Fortran/src/krylov.f90 interfaces/C/build/include/
+          mkdir -p interfaces/build/include
+          cp interfaces/include/krylov.h   interfaces/build/include/
+          cp interfaces/include/krylov.f90 interfaces/build/include/
 
       # -----------------------------------------------------------------------
       # Package the bundle
@@ -136,12 +136,12 @@ jobs:
       - name: Package bundle (Unix — tar.gz)
         if: runner.os != 'Windows'
         shell: bash
-        run: tar -czf "${{ matrix.archive }}" -C interfaces/C/build .
+        run: tar -czf "${{ matrix.archive }}" -C interfaces/build .
 
       - name: Package bundle (Windows — zip)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path interfaces/C/build/* -DestinationPath "${{ matrix.archive }}"
+        run: Compress-Archive -Path interfaces/build/* -DestinationPath "${{ matrix.archive }}"
 
       # -----------------------------------------------------------------------
       # Upload asset to the GitHub Release that TagBot already created.

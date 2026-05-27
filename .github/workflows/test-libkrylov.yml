@@ -103,25 +103,25 @@ jobs:
       - name: Build libkrylov
         shell: bash
         run: |
-          OUTLIB="interfaces/C/build/${{ matrix.libdir }}/${{ matrix.lib }}"
+          OUTLIB="interfaces/build/${{ matrix.libdir }}/${{ matrix.lib }}"
           mkdir -p "$(dirname "$OUTLIB")"
           ${{ matrix.juliac }} \
             --project . \
             --compile-ccallable \
             --trim=safe \
-            --bundle interfaces/C/build \
+            --bundle interfaces/build \
             --output-lib "$OUTLIB" \
-            interfaces/C/src/LibKrylov.jl
+            interfaces/src/LibKrylov.jl
 
       # -----------------------------------------------------------------------
       # Generate the C header
       # -----------------------------------------------------------------------
       - name: Generate krylov.h
         shell: bash
-        run: julia --startup-file=no --project=. interfaces/C/scripts/generate_header.jl
+        run: julia --startup-file=no --project=. interfaces/scripts/generate_header.jl
 
       # -----------------------------------------------------------------------
-      # Run the Julia test suite (all 34 solvers × 4 precisions)
+      # Run the Julia test suite (all solvers × 4 precisions)
       # Loads LibKrylov.jl as a plain Julia module — no dlopen of libkrylov.so.
       # Loading a juliac-compiled lib from within Julia would trigger a second
       # runtime via ijl_adopt_thread and crash; the C/Fortran tests cover the
@@ -130,7 +130,7 @@ jobs:
       - name: Run Julia tests
         shell: bash
         run: |
-          julia --startup-file=no --project=. interfaces/C/test/test_libkrylov.jl
+          julia --startup-file=no --project=. interfaces/test/test_libkrylov.jl
 
       # -----------------------------------------------------------------------
       # Build and run the C smoke test (basic_cg example)
@@ -138,19 +138,19 @@ jobs:
       - name: Build C example
         shell: bash
         run: |
-          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
-          gcc -o interfaces/C/build/basic_cg interfaces/C/examples/basic_cg.c \
-              -I interfaces/C/include \
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
+          gcc -o interfaces/build/basic_cg interfaces/examples/C/basic_cg.c \
+              -I interfaces/include \
               "$LIBPATH/${{ matrix.lib }}"
 
       - name: Run C example
         shell: bash
         run: |
-          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
           export PATH="$LIBPATH:$PATH"
           export LD_LIBRARY_PATH="$LIBPATH:${LD_LIBRARY_PATH:-}"
           export DYLD_LIBRARY_PATH="$LIBPATH:${DYLD_LIBRARY_PATH:-}"
-          actual=$(interfaces/C/build/basic_cg)
+          actual=$(interfaces/build/basic_cg)
           echo "$actual"
           echo "$actual" | grep -q "Solved: yes"
           echo "$actual" | grep -q "x = \[ 1.00 1.00 1.00 1.00 1.00 \]"
@@ -161,22 +161,22 @@ jobs:
       - name: Build C test (all solvers)
         shell: bash
         run: |
-          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
           # -lm is implicit on Windows (CRT), harmless flag on Linux/macOS
-          gcc -O2 -o interfaces/C/build/test_all_solvers \
-              interfaces/C/test/test_all_solvers.c \
-              -I interfaces/C/include \
+          gcc -O2 -o interfaces/build/test_all_solvers_c \
+              interfaces/test/C/test_all_solvers.c \
+              -I interfaces/include \
               "$LIBPATH/${{ matrix.lib }}" \
               -lm
 
       - name: Run C test (all solvers)
         shell: bash
         run: |
-          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
           export PATH="$LIBPATH:$PATH"
           export LD_LIBRARY_PATH="$LIBPATH:${LD_LIBRARY_PATH:-}"
           export DYLD_LIBRARY_PATH="$LIBPATH:${DYLD_LIBRARY_PATH:-}"
-          interfaces/C/build/test_all_solvers
+          interfaces/build/test_all_solvers_c
 
       # -----------------------------------------------------------------------
       # Build and run the Fortran smoke test (basic_cg example)
@@ -184,20 +184,19 @@ jobs:
       - name: Build Fortran example
         shell: bash
         run: |
-          mkdir -p interfaces/Fortran/build
-          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
-          gfortran -o interfaces/Fortran/build/basic_cg \
-              interfaces/Fortran/examples/basic_cg.f90 \
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
+          gfortran -o interfaces/build/basic_cg_fortran \
+              interfaces/examples/Fortran/basic_cg.f90 \
               "$LIBPATH/${{ matrix.lib }}"
 
       - name: Run Fortran example
         shell: bash
         run: |
-          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
           export PATH="$LIBPATH:$PATH"
           export LD_LIBRARY_PATH="$LIBPATH:${LD_LIBRARY_PATH:-}"
           export DYLD_LIBRARY_PATH="$LIBPATH:${DYLD_LIBRARY_PATH:-}"
-          actual=$(interfaces/Fortran/build/basic_cg)
+          actual=$(interfaces/build/basic_cg_fortran)
           echo "$actual"
           echo "$actual" | grep -q "Solved: T"
           echo "$actual" | grep -q "1.00"
@@ -208,16 +207,16 @@ jobs:
       - name: Build Fortran test (all solvers)
         shell: bash
         run: |
-          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
-          gfortran -O2 -o interfaces/Fortran/build/test_all_solvers \
-              interfaces/Fortran/test/test_all_solvers.f90 \
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
+          gfortran -O2 -o interfaces/build/test_all_solvers_fortran \
+              interfaces/test/Fortran/test_all_solvers.f90 \
               "$LIBPATH/${{ matrix.lib }}"
 
       - name: Run Fortran test (all solvers)
         shell: bash
         run: |
-          LIBPATH="$(pwd)/interfaces/C/build/${{ matrix.libdir }}"
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
           export PATH="$LIBPATH:$PATH"
           export LD_LIBRARY_PATH="$LIBPATH:${LD_LIBRARY_PATH:-}"
           export DYLD_LIBRARY_PATH="$LIBPATH:${DYLD_LIBRARY_PATH:-}"
-          interfaces/Fortran/build/test_all_solvers
+          interfaces/build/test_all_solvers_fortran

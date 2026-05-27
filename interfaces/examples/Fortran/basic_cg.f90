@@ -3,12 +3,13 @@
 ! A = tridiag(-1, 2, -1),  b = [1, 0, 0, 0, 1]^T
 !
 ! Compile:
-!   gfortran -o basic_cg basic_cg.f90 -L<build> -lkrylov -Wl,-rpath,<build>
+!   gfortran -o basic_cg interfaces/examples/Fortran/basic_cg.f90 \
+!       interfaces/build/lib/libkrylov.so
 
 program basic_cg
   use iso_c_binding
   implicit none
-  include '../src/krylov.f90'
+  include '../../include/krylov.f90'
 
   integer, parameter :: n = 5
 
