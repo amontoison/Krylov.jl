@@ -39,7 +39,7 @@ jobs:
 
           - label: linux-aarch64
             runner: ubuntu-24.04-arm
-            container: ubuntu-20.04
+            container: ""
             juliac: juliac
             lib: libkrylov.so
             libdir: lib
