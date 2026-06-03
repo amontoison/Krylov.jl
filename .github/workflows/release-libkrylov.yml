@@ -20,6 +20,7 @@ jobs:
   build:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
 
     strategy:
       fail-fast: false
@@ -27,46 +28,57 @@ jobs:
       matrix:
         include:
           - label: linux-x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-20.04
+            container: ""
             juliac: juliac
             lib: libkrylov.so
             libdir: lib
             archive: libkrylov-linux-x86_64.tar.gz
             cpu_target: x86-64
+            deployment_target: ""
 
           - label: linux-aarch64
             runner: ubuntu-24.04-arm
+            container: ubuntu-20.04
             juliac: juliac
             lib: libkrylov.so
             libdir: lib
             archive: libkrylov-linux-aarch64.tar.gz
             cpu_target: generic
+            deployment_target: ""
 
           - label: macos-arm64
             runner: macos-latest
+            container: ""
             juliac: juliac
             lib: libkrylov.dylib
             libdir: lib
             archive: libkrylov-macos-arm64.tar.gz
             cpu_target: generic
+            deployment_target: "11.0"
 
           - label: macos-x86_64
             runner: macos-15-intel
+            container: ""
             juliac: juliac
             lib: libkrylov.dylib
             libdir: lib
             archive: libkrylov-macos-x86_64.tar.gz
             cpu_target: x86-64
+            deployment_target: "10.13"
 
           - label: windows-x86_64
             runner: windows-latest
+            container: ""
             juliac: juliac.bat
             lib: libkrylov.dll
             libdir: bin
             archive: libkrylov-windows-x86_64.zip
             cpu_target: x86-64
+            deployment_target: ""
 
     env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
       JULIA_CPU_TARGET: ${{ matrix.cpu_target }}
 
     steps:
@@ -102,7 +114,6 @@ jobs:
         run: |
           julia --startup-file=no -e '
             println("Sys.CPU_NAME = ", Sys.CPU_NAME)
-            println("cpu_target   = ", Base.JLOptions().cpu_target)
             println("JULIA_CPU_TARGET = ", get(ENV, "JULIA_CPU_TARGET", "<unset>"))
           '
 
