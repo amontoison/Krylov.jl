@@ -9,54 +9,65 @@ name: Release libkrylov binaries
 on:
   release:
     types: [published]
+
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing release tag to upload to (e.g. v0.10.6)'
+        description: 'Existing release tag to upload (like vX.Y.Z)'
         required: true
 
 jobs:
   build:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
+
     strategy:
       fail-fast: false
+
       matrix:
         include:
-          - label:   linux-x86_64
-            runner:  ubuntu-latest
-            juliac:  juliac
-            lib:     libkrylov.so
-            libdir:  lib
+          - label: linux-x86_64
+            runner: ubuntu-latest
+            juliac: juliac
+            lib: libkrylov.so
+            libdir: lib
             archive: libkrylov-linux-x86_64.tar.gz
+            cpu_target: x86-64
 
-          - label:   linux-aarch64
-            runner:  ubuntu-24.04-arm
-            juliac:  juliac
-            lib:     libkrylov.so
-            libdir:  lib
+          - label: linux-aarch64
+            runner: ubuntu-24.04-arm
+            juliac: juliac
+            lib: libkrylov.so
+            libdir: lib
             archive: libkrylov-linux-aarch64.tar.gz
+            cpu_target: generic
 
-          - label:   macos-arm64
-            runner:  macos-latest
-            juliac:  juliac
-            lib:     libkrylov.dylib
-            libdir:  lib
+          - label: macos-arm64
+            runner: macos-latest
+            juliac: juliac
+            lib: libkrylov.dylib
+            libdir: lib
             archive: libkrylov-macos-arm64.tar.gz
+            cpu_target: generic
 
-          - label:   macos-x86_64
-            runner:  macos-15-intel
-            juliac:  juliac
-            lib:     libkrylov.dylib
-            libdir:  lib
+          - label: macos-x86_64
+            runner: macos-15-intel
+            juliac: juliac
+            lib: libkrylov.dylib
+            libdir: lib
             archive: libkrylov-macos-x86_64.tar.gz
+            cpu_target: x86-64
 
-          - label:   windows-x86_64
-            runner:  windows-latest
-            juliac:  juliac.bat
-            lib:     libkrylov.dll
-            libdir:  bin
+          - label: windows-x86_64
+            runner: windows-latest
+            juliac: juliac.bat
+            lib: libkrylov.dll
+            libdir: bin
             archive: libkrylov-windows-x86_64.zip
+            cpu_target: x86-64
+
+    env:
+      JULIA_CPU_TARGET: ${{ matrix.cpu_target }}
 
     steps:
       - uses: actions/checkout@v4
@@ -84,30 +95,37 @@ jobs:
           echo "$JULIAC_BIN" >> "$GITHUB_PATH"
 
       # -----------------------------------------------------------------------
-      # Instantiate the Krylov.jl project (downloads dependencies)
+      # Show CPU information used for compilation
+      # -----------------------------------------------------------------------
+      - name: Show CPU target
+        shell: bash
+        run: |
+          julia --startup-file=no -e '
+            println("Sys.CPU_NAME = ", Sys.CPU_NAME)
+            println("cpu_target   = ", Base.JLOptions().cpu_target)
+            println("JULIA_CPU_TARGET = ", get(ENV, "JULIA_CPU_TARGET", "<unset>"))
+          '
+
+      # -----------------------------------------------------------------------
+      # Instantiate the Krylov.jl project
       # -----------------------------------------------------------------------
       - name: Instantiate Julia project
         shell: bash
-        run: julia --startup-file=no --project=. -e "import Pkg; Pkg.instantiate()"
+        run: |
+          julia --startup-file=no --project=. -e "
+            import Pkg
+            Pkg.instantiate()
+          "
 
       # -----------------------------------------------------------------------
-      # Compile libkrylov with JuliaC --bundle
-      #
-      # The bundle layout produced is:
-      #   interfaces/C/build/
-      #   ├── lib/                       (Unix)
-      #   │   ├── libkrylov.so / .dylib
-      #   │   └── julia/
-      #   ├── bin/                       (Windows)
-      #   │   ├── libkrylov.dll
-      #   │   └── julia/
-      #   └── include/                   (added by us in the next step)
+      # Build libkrylov
       # -----------------------------------------------------------------------
       - name: Build libkrylov
         shell: bash
         run: |
           OUTLIB="interfaces/build/${{ matrix.libdir }}/${{ matrix.lib }}"
           mkdir -p "$(dirname "$OUTLIB")"
+
           ${{ matrix.juliac }} \
             --project . \
             --compile-ccallable \
@@ -117,35 +135,40 @@ jobs:
             interfaces/src/LibKrylov.jl
 
       # -----------------------------------------------------------------------
-      # Generate krylov.h and copy headers into the bundle
+      # Generate krylov.h
       # -----------------------------------------------------------------------
       - name: Generate krylov.h
         shell: bash
-        run: julia --startup-file=no --project=. interfaces/scripts/generate_header.jl
+        run: |
+          julia --startup-file=no --project=. \
+            interfaces/scripts/generate_header.jl
 
       - name: Copy headers into bundle
         shell: bash
         run: |
           mkdir -p interfaces/build/include
-          cp interfaces/include/krylov.h   interfaces/build/include/
+          cp interfaces/include/krylov.h interfaces/build/include/
           cp interfaces/include/krylov.f90 interfaces/build/include/
 
       # -----------------------------------------------------------------------
-      # Package the bundle
+      # Package bundle
       # -----------------------------------------------------------------------
       - name: Package bundle (Unix — tar.gz)
         if: runner.os != 'Windows'
         shell: bash
-        run: tar -czf "${{ matrix.archive }}" -C interfaces/build .
+        run: |
+          tar -czf "${{ matrix.archive }}" -C interfaces/build .
 
       - name: Package bundle (Windows — zip)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path interfaces/build/* -DestinationPath "${{ matrix.archive }}"
+        run: |
+          Compress-Archive `
+            -Path interfaces/build/* `
+            -DestinationPath "${{ matrix.archive }}"
 
       # -----------------------------------------------------------------------
-      # Upload asset to the GitHub Release that TagBot already created.
-      # --clobber lets workflow_dispatch re-runs overwrite existing assets.
+      # Upload release asset
       # -----------------------------------------------------------------------
       - name: Upload release asset
         shell: bash
