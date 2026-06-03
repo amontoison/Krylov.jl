@@ -28,7 +28,7 @@ jobs:
       matrix:
         include:
           - label: linux-x86_64
-            runner: ubuntu-20.04
+            runner: ubuntu-22.04
             container: ""
             juliac: juliac
             lib: libkrylov.so
