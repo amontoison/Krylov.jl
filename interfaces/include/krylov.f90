@@ -65,6 +65,37 @@
   integer(c_int), parameter :: KRYLOV_CAR        = 32
   integer(c_int), parameter :: KRYLOV_MINARES    = 33
 
+  ! KrylovBlockSolverType  (block_gmres / block_minres)
+  integer(c_int), parameter :: KRYLOV_BLOCK_GMRES  = 0
+  integer(c_int), parameter :: KRYLOV_BLOCK_MINRES = 1
+
+  ! -------------------------------------------------------------------------
+  ! Option types  (must match the structs in krylov.h)
+  !
+  ! Two separate structs, mirroring when each option is consumed:
+  !   * KrylovWorkspaceOptions — construction-time (krylov_workspace_create)
+  !   * KrylovOptions          — solve-time        (krylov_solve)
+  !
+  ! Initialise with krylov_default_workspace_options() / krylov_default_options()
+  ! and override only the fields you need.  Sentinel 0 (ints) or NaN (doubles)
+  ! means "use the solver default".  Pass the struct via c_loc(opts).
+  ! -------------------------------------------------------------------------
+
+  type, bind(c) :: KrylovWorkspaceOptions
+    integer(c_int) :: memory   ! 0 → 20 (GMRES / FGMRES / FOM / DIOM / DQGMRES / GPMR)
+    integer(c_int) :: window   ! 0 → 5  (MINRES / SYMMLQ / LSQR / LSMR / LSLQ)
+  end type KrylovWorkspaceOptions
+
+  type, bind(c) :: KrylovOptions
+    real(c_double) :: atol     ! NaN → sqrt(eps(T)) per precision
+    real(c_double) :: rtol     ! NaN → sqrt(eps(T)) per precision
+    integer(c_int) :: itmax    ! 0   → solver default
+    integer(c_int) :: verbose  ! 0   = silent
+    real(c_double) :: lambda   ! 0.0 = no regularisation (LSQR / LSMR / CGLS / …)
+    real(c_double) :: tau      ! NaN → solver default (TriCG / TriMR : 1.0)
+    real(c_double) :: nu       ! NaN → solver default (TriCG / TriMR : -1.0)
+  end type KrylovOptions
+
   ! -------------------------------------------------------------------------
   ! Callback interface
   !
@@ -92,11 +123,41 @@
     end subroutine krylov_matvec
   end interface
 
+  ! Block matvec: computes Y = A*X (or Y = M\X) for a block of p columns.
+  ! X is n×p, Y is m×p, both column-major.  Pass via c_funloc(my_block_matvec).
+  abstract interface
+    subroutine krylov_block_matvec(x_ptr, y_ptr, p, userdata) bind(c)
+      use iso_c_binding
+      type(c_ptr),    value :: x_ptr    ! read-only input block (n×p)
+      type(c_ptr),    value :: y_ptr    ! output block (m×p)
+      integer(c_int), value :: p        ! block size (number of columns)
+      type(c_ptr),    value :: userdata ! opaque user context
+    end subroutine krylov_block_matvec
+  end interface
+
   ! -------------------------------------------------------------------------
   ! C function interfaces
   ! -------------------------------------------------------------------------
 
   interface
+
+    ! -----------------------------------------------------------------------
+    ! krylov_default_workspace_options / krylov_default_options
+    !
+    ! Return an option struct with every field set to its "use default"
+    ! sentinel.  Always start from these before overriding fields.
+    ! -----------------------------------------------------------------------
+    function krylov_default_workspace_options() &
+        bind(c, name='krylov_default_workspace_options') result(wopts)
+      import :: KrylovWorkspaceOptions
+      type(KrylovWorkspaceOptions) :: wopts
+    end function krylov_default_workspace_options
+
+    function krylov_default_options() &
+        bind(c, name='krylov_default_options') result(opts)
+      import :: KrylovOptions
+      type(KrylovOptions) :: opts
+    end function krylov_default_options
 
     ! -----------------------------------------------------------------------
     ! krylov_workspace_create
@@ -107,14 +168,16 @@
     !   m, n    : operator dimensions
     !   dtype   : KrylovDataType constant (KRYLOV_FLOAT32 / KRYLOV_FLOAT64 / ...)
     !   device  : KrylovDeviceType constant (KRYLOV_CPU)
+    !   wopts   : c_loc(KrylovWorkspaceOptions)  or  c_null_ptr for defaults
     !   ws      : receives the opaque workspace handle
     !
     ! Returns 0 on success, nonzero on error.
     ! -----------------------------------------------------------------------
-    function krylov_workspace_create(solver, m, n, dtype, device, ws) &
+    function krylov_workspace_create(solver, m, n, dtype, device, wopts, ws) &
         bind(c, name='krylov_workspace_create') result(ret)
       use iso_c_binding
       integer(c_int), value       :: solver, m, n, dtype, device
+      type(c_ptr),    value       :: wopts   ! c_loc(opts) or c_null_ptr
       type(c_ptr),    intent(out) :: ws
       integer(c_int)              :: ret
     end function krylov_workspace_create
@@ -130,14 +193,12 @@
     !   c          : second right-hand side pointer (c_loc of your array, size n)
     !                  c_null_ptr for solvers that only need one RHS
     !   userdata   : forwarded to every callback (c_loc or c_null_ptr)
-    !   atol,rtol  : tolerances
-    !   itmax      : max iterations (0 = solver default)
-    !   verbose    : verbosity level (0 = silent)
+    !   opts       : c_loc(KrylovOptions)  or  c_null_ptr for all defaults
     !
     ! Returns 0 on success, nonzero on error.
     ! -----------------------------------------------------------------------
     function krylov_solve(ws, matvec_A, matvec_At, matvec_M, &
-                          b, c, userdata, atol, rtol, itmax, verbose) &
+                          b, c, userdata, opts) &
         bind(c, name='krylov_solve') result(ret)
       use iso_c_binding
       type(c_ptr),    value :: ws
@@ -147,8 +208,7 @@
       type(c_ptr),    value :: b           ! c_loc(b_array), size m
       type(c_ptr),    value :: c           ! c_loc(c_array), size n  or  c_null_ptr
       type(c_ptr),    value :: userdata    ! c_loc(data)  or  c_null_ptr
-      real(c_double), value :: atol, rtol
-      integer(c_int), value :: itmax, verbose
+      type(c_ptr),    value :: opts        ! c_loc(KrylovOptions) or c_null_ptr
       integer(c_int)        :: ret
     end function krylov_solve
 
@@ -249,5 +309,90 @@
       type(c_ptr),   value :: ws
       integer(c_int)       :: ret
     end function krylov_workspace_free
+
+    ! -----------------------------------------------------------------------
+    ! Block Krylov interface (block_gmres / block_minres)
+    !
+    ! The right-hand side is an m×p block B and the solution an n×p block X,
+    ! both column-major.  Pass blocks via c_loc(your_2d_array).
+    ! -----------------------------------------------------------------------
+
+    ! krylov_block_workspace_create
+    !   solver : KRYLOV_BLOCK_GMRES / KRYLOV_BLOCK_MINRES
+    !   m, n   : operator dimensions ; p : block size (#columns)
+    !   wopts  : c_loc(KrylovWorkspaceOptions) or c_null_ptr (memory: block_gmres)
+    function krylov_block_workspace_create(solver, m, n, p, dtype, device, wopts, ws) &
+        bind(c, name='krylov_block_workspace_create') result(ret)
+      use iso_c_binding
+      integer(c_int), value       :: solver, m, n, p, dtype, device
+      type(c_ptr),    value       :: wopts
+      type(c_ptr),    intent(out) :: ws
+      integer(c_int)              :: ret
+    end function krylov_block_workspace_create
+
+    ! krylov_block_solve
+    !   matvec_A : block matvec  Y = A*X        (required)
+    !   matvec_M : block matvec  Y = M\X        (c_null_funptr = no preconditioner)
+    !   B        : c_loc(B), m×p column-major
+    !   opts     : c_loc(KrylovOptions) or c_null_ptr
+    function krylov_block_solve(ws, matvec_A, matvec_M, b, userdata, opts) &
+        bind(c, name='krylov_block_solve') result(ret)
+      use iso_c_binding
+      type(c_ptr),    value :: ws
+      type(c_funptr), value :: matvec_A
+      type(c_funptr), value :: matvec_M
+      type(c_ptr),    value :: b
+      type(c_ptr),    value :: userdata
+      type(c_ptr),    value :: opts
+      integer(c_int)        :: ret
+    end function krylov_block_solve
+
+    ! krylov_block_get_X — copies the n×p solution block into c_loc(X)
+    function krylov_block_get_X(ws, x, n, p) &
+        bind(c, name='krylov_block_get_X') result(ret)
+      use iso_c_binding
+      type(c_ptr),    value :: ws
+      type(c_ptr),    value :: x
+      integer(c_int), value :: n, p
+      integer(c_int)        :: ret
+    end function krylov_block_get_X
+
+    function krylov_block_is_solved(ws) &
+        bind(c, name='krylov_block_is_solved') result(ret)
+      use iso_c_binding
+      type(c_ptr),   value :: ws
+      integer(c_int)       :: ret
+    end function krylov_block_is_solved
+
+    function krylov_block_niter(ws) &
+        bind(c, name='krylov_block_niter') result(ret)
+      use iso_c_binding
+      type(c_ptr),   value :: ws
+      integer(c_int)       :: ret
+    end function krylov_block_niter
+
+    function krylov_block_elapsed_time(ws) &
+        bind(c, name='krylov_block_elapsed_time') result(ret)
+      use iso_c_binding
+      type(c_ptr),    value :: ws
+      real(c_double)        :: ret
+    end function krylov_block_elapsed_time
+
+    ! krylov_block_warm_start — initial guess (n×p block) for the next solve
+    function krylov_block_warm_start(ws, x0, n, p) &
+        bind(c, name='krylov_block_warm_start') result(ret)
+      use iso_c_binding
+      type(c_ptr),    value :: ws
+      type(c_ptr),    value :: x0
+      integer(c_int), value :: n, p
+      integer(c_int)        :: ret
+    end function krylov_block_warm_start
+
+    function krylov_block_workspace_free(ws) &
+        bind(c, name='krylov_block_workspace_free') result(ret)
+      use iso_c_binding
+      type(c_ptr),   value :: ws
+      integer(c_int)       :: ret
+    end function krylov_block_workspace_free
 
   end interface

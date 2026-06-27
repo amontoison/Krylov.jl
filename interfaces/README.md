@@ -83,13 +83,18 @@ interfaces/build/
 typedef void (*KrylovMatvec)(const void *x, void *y, void *userdata);
 
 /* 1. Create a workspace for a named solver */
+KrylovWorkspaceOptions krylov_default_workspace_options(void);  /* memory / window  */
+
 int krylov_workspace_create(KrylovSolverType solver, /* KRYLOV_CG, KRYLOV_GMRES, ...  */
-                             int m, int n,             /* operator dimensions           */
-                             KrylovDataType dtype,     /* KRYLOV_FLOAT64, ...           */
-                             KrylovDeviceType device,  /* KRYLOV_CPU                    */
-                             void **ws_out);           /* receives the handle           */
+                            int m, int n,             /* operator dimensions           */
+                            KrylovDataType dtype,     /* KRYLOV_FLOAT64, ...           */
+                            KrylovDeviceType device,  /* KRYLOV_CPU                    */
+                            const KrylovWorkspaceOptions *wopts, /* NULL = defaults    */
+                            void **ws_out);           /* receives the handle           */
 
 /* 2. Solve */
+KrylovOptions krylov_default_options(void);  /* atol/rtol/itmax/verbose/lambda/tau/nu */
+
 int krylov_solve(void *ws,
                  KrylovMatvec matvec_A,   /* y = A*x  (required)               */
                  KrylovMatvec matvec_At,  /* y = A'*x (NULL if not needed)     */
@@ -97,9 +102,7 @@ int krylov_solve(void *ws,
                  const void *b,           /* right-hand side (size m)          */
                  const void *c,           /* second RHS (NULL if not needed)   */
                  void *userdata,          /* forwarded to every callback        */
-                 double atol, double rtol,
-                 int itmax,              /* 0 = solver default                 */
-                 int verbose);           /* 0 = silent                         */
+                 const KrylovOptions *opts); /* NULL = solver defaults          */
 
 /* 3. Retrieve results */
 int    krylov_get_x(void *ws, void *x, int n);   /* primal solution             */
@@ -115,13 +118,27 @@ int krylov_warm_start(void *ws, const void *x0, int n);
 int krylov_workspace_free(void *ws);
 ```
 
-### Enumerators
+### Enumerators and option structs
 
 ```c
 typedef enum { KRYLOV_FLOAT32=0, KRYLOV_FLOAT64=1,
                KRYLOV_COMPLEX32=2, KRYLOV_COMPLEX64=3 } KrylovDataType;
 
 typedef enum { KRYLOV_CPU=0 } KrylovDeviceType;
+
+/* Construction-time options (krylov_workspace_create). 0 = solver default. */
+typedef struct {
+    int memory;  /* GMRES / FGMRES / FOM / DIOM / DQGMRES / GPMR  (default 20) */
+    int window;  /* MINRES / SYMMLQ / LSQR / LSMR / LSLQ          (default 5)  */
+} KrylovWorkspaceOptions;
+
+/* Solve-time options (krylov_solve). NaN/0 = solver default. */
+typedef struct {
+    double atol, rtol;       /* tolerances                                    */
+    int    itmax, verbose;   /* max iterations / verbosity                    */
+    double lambda;           /* regularisation (LSQR / LSMR / CGLS / ...)     */
+    double tau, nu;          /* TriCG / TriMR diagonal parameters             */
+} KrylovOptions;
 ```
 
 ### Which solvers need `matvec_At`?
@@ -141,12 +158,40 @@ static void my_matvec(const void *x, void *y, void *data) {
 
 int main(void) {
     void *ws = NULL;
-    krylov_workspace_create(KRYLOV_CG, n, n, KRYLOV_FLOAT64, KRYLOV_CPU, &ws);
-    krylov_solve(ws, my_matvec, NULL, NULL, b, NULL, NULL, 1e-10, 1e-10, 0, 0);
+    krylov_workspace_create(KRYLOV_CG, n, n, KRYLOV_FLOAT64, KRYLOV_CPU, NULL, &ws);
+
+    KrylovOptions opts = krylov_default_options();
+    opts.atol = 1e-10;
+    opts.rtol = 1e-10;
+    krylov_solve(ws, my_matvec, NULL, NULL, b, NULL, NULL, &opts);
     krylov_get_x(ws, x, n);
     krylov_workspace_free(ws);
 }
 ```
+
+### Block solvers (multiple right-hand sides)
+
+`block_gmres` and `block_minres` solve `A X = B` for an `m×p` block `B` at once.
+They have a parallel API — `krylov_block_workspace_create`, `krylov_block_solve`,
+`krylov_block_get_X`, … — with a block matvec that also receives the block width:
+
+```c
+typedef enum { KRYLOV_BLOCK_GMRES = 0, KRYLOV_BLOCK_MINRES = 1 } KrylovBlockSolverType;
+
+/* Y = A*X for a block of p columns; X is n*p, Y is m*p, both column-major */
+typedef void (*KrylovBlockMatvec)(const void *X, void *Y, int p, void *userdata);
+
+int krylov_block_workspace_create(KrylovBlockSolverType solver, int m, int n, int p,
+                                  KrylovDataType dtype, KrylovDeviceType device,
+                                  const KrylovWorkspaceOptions *wopts, void **ws_out);
+int krylov_block_solve(void *ws, KrylovBlockMatvec matvec_A, KrylovBlockMatvec matvec_M,
+                       const void *B, void *userdata, const KrylovOptions *opts);
+int krylov_block_get_X(void *ws, void *X, int n, int p);
+/* + krylov_block_{is_solved,niter,elapsed_time,warm_start,workspace_free} */
+```
+
+Blocks are column-major and `B` must have full column rank. See the
+[documentation](https://jso.dev/Krylov.jl/dev/c_fortran/) for details.
 
 ## Directory structure
 
@@ -172,7 +217,9 @@ interfaces/
 ├── test/
 │   ├── test_libkrylov.jl     # Julia unit tests (no dlopen)
 │   ├── C/
-│   │   └── test_all_solvers.c
+│   │   ├── test_all_solvers.c  # convergence of every solver
+│   │   ├── test_api.c          # options, preconditioner, warm start, error codes
+│   │   └── test_block.c        # block_gmres / block_minres
 │   └── Fortran/
 │       └── test_all_solvers.f90
 └── README.md

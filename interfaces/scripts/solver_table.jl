@@ -40,3 +40,11 @@ const SOLVERS = [
   ("car",        "CarWorkspace",      "KRYLOV_CAR"),
   ("minares",    "MinaresWorkspace",  "KRYLOV_MINARES"),
 ]
+
+# Block Krylov solvers — a separate, matrix-based API (m×p block right-hand side).
+# Each entry: (c_name, workspace_type_name, enum_constant).
+# The enum value equals the 0-based index in this list.
+const BLOCK_SOLVERS = [
+  ("block_gmres",  "BlockGmresWorkspace",  "KRYLOV_BLOCK_GMRES"),
+  ("block_minres", "BlockMinresWorkspace", "KRYLOV_BLOCK_MINRES"),
+]

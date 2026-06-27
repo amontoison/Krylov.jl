@@ -31,14 +31,15 @@ using .LibKrylov
 include(joinpath(@__DIR__, "..", "scripts", "solver_table.jl"))
 
 # Bring the @ccallable entry points into scope as plain Julia functions
-const krylov_workspace_create = LibKrylov.krylov_workspace_create
-const krylov_workspace_free   = LibKrylov.krylov_workspace_free
-const krylov_solve            = LibKrylov.krylov_solve
-const krylov_get_x            = LibKrylov.krylov_get_x
-const krylov_get_y            = LibKrylov.krylov_get_y
-const krylov_warm_start       = LibKrylov.krylov_warm_start
-const krylov_is_solved        = LibKrylov.krylov_is_solved
-const krylov_niter            = LibKrylov.krylov_niter
+const krylov_workspace_create  = LibKrylov.krylov_workspace_create
+const krylov_workspace_free    = LibKrylov.krylov_workspace_free
+const krylov_default_options   = LibKrylov.krylov_default_options
+const krylov_solve             = LibKrylov.krylov_solve
+const krylov_get_x             = LibKrylov.krylov_get_x
+const krylov_get_y             = LibKrylov.krylov_get_y
+const krylov_warm_start        = LibKrylov.krylov_warm_start
+const krylov_is_solved         = LibKrylov.krylov_is_solved
+const krylov_niter             = LibKrylov.krylov_niter
 
 # ============================================================================
 # Enums (must match krylov.h / solver_table.jl)
@@ -55,6 +56,11 @@ const KRYLOV_CPU = Cint(0)
 
 # KrylovSolverType — derived from solver_table.jl (single source of truth)
 for (si, (cname, _, enum_name)) in enumerate(SOLVERS)
+    @eval const $(Symbol(enum_name)) = Cint($(si - 1))
+end
+
+# KrylovBlockSolverType — derived from BLOCK_SOLVERS (solver_table.jl)
+for (si, (cname, _, enum_name)) in enumerate(BLOCK_SOLVERS)
     @eval const $(Symbol(enum_name)) = Cint($(si - 1))
 end
 
@@ -77,6 +83,7 @@ function c_workspace_create(solver::Cint, m::Int, n::Int, dtype::Cint)
     ws = Ref{Ptr{Cvoid}}(C_NULL)
     ret = GC.@preserve ws begin
         krylov_workspace_create(solver, Cint(m), Cint(n), dtype, KRYLOV_CPU,
+                                C_NULL,   # workspace options (defaults)
                                 Base.unsafe_convert(Ptr{Ptr{Cvoid}}, ws))
     end
     ret == 0 || error("workspace_create(solver=$solver, dtype=$dtype) returned $ret")
@@ -90,17 +97,18 @@ end
 function c_solve(ws::Ptr{Cvoid}, cb_A::Ptr{Cvoid}, cb_At::Ptr{Cvoid},
                  b::Vector; c::Union{Vector,Nothing}=nothing,
                  atol=1e-8, rtol=1e-8, itmax=0, verbose=0)
-    GC.@preserve b begin
-        b_ptr = Base.unsafe_convert(Ptr{Cvoid}, pointer(b))
+    opts = Ref(LibKrylov.KrylovOptionsC(atol, rtol, Cint(itmax), Cint(verbose),
+                                        0.0, NaN, NaN))
+    GC.@preserve b opts begin
+        b_ptr    = Base.unsafe_convert(Ptr{Cvoid}, pointer(b))
+        opts_ptr = Base.unsafe_convert(Ptr{Cvoid}, opts)
         if c !== nothing
             GC.@preserve c begin
                 c_ptr = Base.unsafe_convert(Ptr{Cvoid}, pointer(c))
-                ret = krylov_solve(ws, cb_A, cb_At, C_NULL, b_ptr, c_ptr, C_NULL,
-                                   Cdouble(atol), Cdouble(rtol), Cint(itmax), Cint(verbose))
+                ret = krylov_solve(ws, cb_A, cb_At, C_NULL, b_ptr, c_ptr, C_NULL, opts_ptr)
             end
         else
-            ret = krylov_solve(ws, cb_A, cb_At, C_NULL, b_ptr, C_NULL, C_NULL,
-                               Cdouble(atol), Cdouble(rtol), Cint(itmax), Cint(verbose))
+            ret = krylov_solve(ws, cb_A, cb_At, C_NULL, b_ptr, C_NULL, C_NULL, opts_ptr)
         end
     end
     ret == 0 || error("krylov_solve returned $ret")
@@ -183,6 +191,18 @@ get_callbacks(::Type{Float32})    = (CB_A_F32,  CB_At_F32)
 get_callbacks(::Type{Float64})    = (CB_A_F64,  CB_At_F64)
 get_callbacks(::Type{ComplexF32}) = (CB_A_C32,  CB_At_C32)
 get_callbacks(::Type{ComplexF64}) = (CB_A_C64,  CB_At_C64)
+
+# Block matvec callback (Float64) — Y = A * X for an n×p block
+const _BA_f64 = Ref{Matrix{Float64}}()
+function _block_mv_f64(Xp::Ptr{Cvoid}, Yp::Ptr{Cvoid}, p::Cint, ud::Ptr{Cvoid})
+    A = _BA_f64[]
+    m, n = size(A)
+    X = unsafe_wrap(Matrix{Float64}, Ptr{Float64}(Xp), (n, Int(p)))
+    Y = unsafe_wrap(Matrix{Float64}, Ptr{Float64}(Yp), (m, Int(p)))
+    mul!(Y, A, X)
+    nothing
+end
+const BCB_A_F64 = @cfunction(_block_mv_f64, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Cint, Ptr{Cvoid}))
 
 # ============================================================================
 # Test problems
@@ -374,6 +394,137 @@ function test_warm_start()
 end
 
 # ============================================================================
+# Workspace options (memory / window) — white-box: confirm the value passed
+# through KrylovWorkspaceOptions actually reaches the workspace constructor.
+# ============================================================================
+
+function create_with_wopts(solver::Cint, n::Int; memory::Int=0, window::Int=0)
+    ws    = Ref{Ptr{Cvoid}}(C_NULL)
+    wopts = Ref(LibKrylov.KrylovWorkspaceOptionsC(Cint(memory), Cint(window)))
+    ret = GC.@preserve ws wopts begin
+        krylov_workspace_create(solver, Cint(n), Cint(n), KRYLOV_FLOAT64, KRYLOV_CPU,
+                                Base.unsafe_convert(Ptr{Cvoid}, wopts),
+                                Base.unsafe_convert(Ptr{Ptr{Cvoid}}, ws))
+    end
+    ret == 0 || error("create_with_wopts returned $ret")
+    ws[]
+end
+
+ws_object(store::String, ws::Ptr{Cvoid}) = getfield(LibKrylov, Symbol(store))[ws]
+
+function test_workspace_options()
+    n = 12
+
+    # memory → number of Krylov basis vectors (field :V)
+    for (solver, store) in ((KRYLOV_GMRES,   "store_gmres_f64"),
+                            (KRYLOV_FGMRES,  "store_fgmres_f64"),
+                            (KRYLOV_FOM,     "store_fom_f64"),
+                            (KRYLOV_DIOM,    "store_diom_f64"),
+                            (KRYLOV_DQGMRES, "store_dqgmres_f64"))
+        ws = create_with_wopts(solver, n; memory=4)
+        try
+            @test length(ws_object(store, ws).V) == 4
+        finally
+            c_workspace_free(ws)
+        end
+        # memory = 0 falls back to the default (20, clamped to n here)
+        ws = create_with_wopts(solver, n; memory=0)
+        try
+            @test length(ws_object(store, ws).V) == min(20, n)
+        finally
+            c_workspace_free(ws)
+        end
+    end
+
+    # window → residual-estimation history (field :err_vec, or :clist for SYMMLQ)
+    for (solver, store, field) in ((KRYLOV_MINRES, "store_minres_f64", :err_vec),
+                                   (KRYLOV_LSQR,   "store_lsqr_f64",   :err_vec),
+                                   (KRYLOV_LSMR,   "store_lsmr_f64",   :err_vec),
+                                   (KRYLOV_LSLQ,   "store_lslq_f64",   :err_vec),
+                                   (KRYLOV_SYMMLQ, "store_symmlq_f64", :clist))
+        ws = create_with_wopts(solver, n; window=3)
+        try
+            @test length(getfield(ws_object(store, ws), field)) == 3
+        finally
+            c_workspace_free(ws)
+        end
+    end
+end
+
+# ============================================================================
+# Block Krylov interface (block_gmres / block_minres)
+# ============================================================================
+
+function block_create(solver::Cint, n::Int, p::Int, dtype::Cint; memory::Int=0)
+    ws    = Ref{Ptr{Cvoid}}(C_NULL)
+    wopts = Ref(LibKrylov.KrylovWorkspaceOptionsC(Cint(memory), Cint(0)))
+    ret = GC.@preserve ws wopts begin
+        LibKrylov.krylov_block_workspace_create(solver, Cint(n), Cint(n), Cint(p),
+            dtype, KRYLOV_CPU, Base.unsafe_convert(Ptr{Cvoid}, wopts),
+            Base.unsafe_convert(Ptr{Ptr{Cvoid}}, ws))
+    end
+    (ret, ws[])
+end
+
+function test_block_solve()
+    n, p = 16, 3
+    A = Matrix{Float64}(SymTridiagonal(fill(8.0, n), fill(-1.0, n-1)))  # diag-dominant SPD
+    _BA_f64[] = A
+    Xtrue = zeros(Float64, n, p)
+    for i in 1:n, j in 1:p
+        t = i / n
+        Xtrue[i, j] = j == 1 ? 1.0 : (j == 2 ? t : t^2)   # independent columns
+    end
+    B = A * Xtrue
+    for solver in (KRYLOV_BLOCK_GMRES, KRYLOV_BLOCK_MINRES)
+        ret, ws = block_create(solver, n, p, KRYLOV_FLOAT64)
+        @test ret == 0
+        try
+            opts = Ref(LibKrylov.KrylovOptionsC(1e-10, 1e-10, Cint(200), Cint(0), 0.0, NaN, NaN))
+            r = GC.@preserve B opts begin
+                LibKrylov.krylov_block_solve(ws, BCB_A_F64, C_NULL,
+                    Base.unsafe_convert(Ptr{Cvoid}, pointer(B)), C_NULL,
+                    Base.unsafe_convert(Ptr{Cvoid}, opts))
+            end
+            @test r == 0
+            @test LibKrylov.krylov_block_is_solved(ws) == 1
+            @test LibKrylov.krylov_block_niter(ws) > 0
+            X = zeros(Float64, n, p)
+            GC.@preserve X LibKrylov.krylov_block_get_X(ws,
+                Base.unsafe_convert(Ptr{Cvoid}, pointer(X)), Cint(n), Cint(p))
+            @test maximum(abs.(X .- Xtrue)) < 1e-6
+        finally
+            LibKrylov.krylov_block_workspace_free(ws)
+        end
+    end
+end
+
+function test_block_workspace_options()
+    n, p = 12, 3   # div(n, p) = 4, so memory=3 is not clamped
+    for (suffix, dtype) in (("f32", KRYLOV_FLOAT32), ("f64", KRYLOV_FLOAT64),
+                            ("cf32", KRYLOV_COMPLEX32), ("cf64", KRYLOV_COMPLEX64))
+        ret, ws = block_create(KRYLOV_BLOCK_GMRES, n, p, dtype; memory=3)
+        @test ret == 0
+        store = getfield(LibKrylov, Symbol("store_block_gmres_$(suffix)"))
+        try
+            @test length(store[ws].V) == min(3, div(n, p))
+        finally
+            LibKrylov.krylov_block_workspace_free(ws)
+        end
+    end
+end
+
+function test_block_errors()
+    # unknown block solver → -2
+    ret, _ = block_create(Cint(99), 8, 2, KRYLOV_FLOAT64)
+    @test ret == -2
+    # double free → 0 then 1
+    _, ws = block_create(KRYLOV_BLOCK_GMRES, 8, 2, KRYLOV_FLOAT64)
+    @test LibKrylov.krylov_block_workspace_free(ws) == 0
+    @test LibKrylov.krylov_block_workspace_free(ws) == 1
+end
+
+# ============================================================================
 # Run all tests
 # ============================================================================
 
@@ -386,5 +537,15 @@ end
 
     @testset "warm_start" begin
         test_warm_start()
+    end
+
+    @testset "workspace_options" begin
+        test_workspace_options()
+    end
+
+    @testset "block solvers" begin
+        test_block_solve()
+        test_block_workspace_options()
+        test_block_errors()
     end
 end

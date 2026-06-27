@@ -86,6 +86,38 @@ function LinearAlgebra.mul!(y::AbstractVector{T}, p::CPreconditioner{T}, x::Abst
 end
 
 # ---------------------------------------------------------------------------
+# CBlockOperator: wraps a C block-matvec for the block Krylov solvers.
+#
+# The block solvers (block_gmres, block_minres) apply the operator to a whole
+# block of p columns at once via mul!(Y, op, X) where X is n×p and Y is m×p.
+# The C callback receives the column-major buffers and the block width p:
+#
+#   void KrylovBlockMatvec(const void *X, void *Y, int p, void *userdata);
+#
+# The same wrapper is reused for the preconditioner M (applied as Y = M⁻¹·X).
+# ---------------------------------------------------------------------------
+struct CBlockOperator{T}
+  m        :: Int
+  n        :: Int
+  fptr     :: Ptr{Cvoid}
+  userdata :: Ptr{Cvoid}
+end
+
+Base.size(op::CBlockOperator)         = (op.m, op.n)
+Base.size(op::CBlockOperator, d::Int) = d == 1 ? op.m : op.n
+Base.eltype(::CBlockOperator{T}) where T = T
+
+function LinearAlgebra.mul!(Y::AbstractMatrix{T}, op::CBlockOperator{T}, X::AbstractMatrix{T}) where T
+  p = size(X, 2)
+  GC.@preserve X Y begin
+    xptr = Base.unsafe_convert(Ptr{Cvoid}, pointer(X))
+    yptr = Base.unsafe_convert(Ptr{Cvoid}, pointer(Y))
+    ccall(op.fptr, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Cint, Ptr{Cvoid}), xptr, yptr, Cint(p), op.userdata)
+  end
+  return Y
+end
+
+# ---------------------------------------------------------------------------
 # Helpers to build operators from C pointers
 # ---------------------------------------------------------------------------
 function make_operator(::Type{T}, m::Int, n::Int, fptr::Ptr{Cvoid}, fptr_t::Ptr{Cvoid}, userdata::Ptr{Cvoid}) where T

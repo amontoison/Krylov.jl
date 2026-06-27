@@ -19,6 +19,11 @@ solver_enum_entries = join(
   ",\n"
 )
 
+block_solver_enum_entries = join(
+  ["  $(enum_name) = $(si-1)" for (si, (_, _, enum_name)) in enumerate(BLOCK_SOLVERS)],
+  ",\n"
+)
+
 # ---------------------------------------------------------------------------
 # Write krylov.h
 # ---------------------------------------------------------------------------
@@ -57,6 +62,10 @@ typedef enum {
 $(solver_enum_entries),
 } KrylovSolverType;
 
+typedef enum {
+$(block_solver_enum_entries),
+} KrylovBlockSolverType;
+
 /* -------------------------------------------------------------------------
  * Callback types
  *
@@ -64,17 +73,65 @@ $(solver_enum_entries),
  *   x        : input vector  (read-only, length n)
  *   y        : output vector (write, length m)
  *   userdata : opaque pointer forwarded from krylov_solve
+ *
+ * KrylovBlockMatvec: block variant for block_gmres / block_minres.
+ *   X        : input  block (read-only, n*p, column-major)
+ *   Y        : output block (write,      m*p, column-major)
+ *   p        : block size (number of columns)
+ *   userdata : opaque pointer forwarded from krylov_block_solve
  * ------------------------------------------------------------------------- */
 
 typedef void (*KrylovMatvec)(const void *x, void *y, void *userdata);
+typedef void (*KrylovBlockMatvec)(const void *X, void *Y, int p, void *userdata);
 
 /* -------------------------------------------------------------------------
  * API functions
  * ------------------------------------------------------------------------- */
 """)
 
+  # Option structs must appear before any function that references them.
+  println(io, """
+/* -------------------------------------------------------------------------
+ * Workspace options (construction-time)
+ *
+ * Passed to krylov_workspace_create.  These control how the workspace is
+ * allocated, so they belong to creation rather than to the solve call.
+ * Initialise with krylov_default_workspace_options() before overriding.
+ * Sentinel 0 means "use solver default".
+ *
+ * Fields ignored by a given solver are silently disregarded.
+ * ------------------------------------------------------------------------- */
+
+typedef struct {
+  int memory;  /* 0 → 20  (GMRES / FGMRES / FOM / DIOM / DQGMRES / GPMR)      */
+  int window;  /* 0 → 5   (MINRES / SYMMLQ / LSQR / LSMR / LSLQ)              */
+} KrylovWorkspaceOptions;
+
+/* -------------------------------------------------------------------------
+ * Solver options (solve-time)
+ *
+ * Passed to krylov_solve.  Initialise with krylov_default_options() before
+ * overriding individual fields.  Sentinel values mean "use solver default":
+ *   NaN  for double fields  (atol, rtol, tau, nu)
+ *   0    for int fields     (itmax)
+ *   0.0  for lambda         (no regularisation, which is the default)
+ *
+ * Fields ignored by a given solver are silently disregarded.
+ * ------------------------------------------------------------------------- */
+
+typedef struct {
+  double atol;    /* NaN  → sqrt(eps(T)) per precision                        */
+  double rtol;    /* NaN  → sqrt(eps(T)) per precision                        */
+  int    itmax;   /* 0    → solver default                                     */
+  int    verbose; /* 0    = silent                                             */
+  double lambda;  /* 0.0  = no regularisation (LSQR / LSMR / CGLS / ...)     */
+  double tau;     /* NaN  → solver default (TriCG / TriMR : 1.0)              */
+  double nu;      /* NaN  → solver default (TriCG / TriMR : -1.0)             */
+} KrylovOptions;
+""")
+
   for (name, ret, args) in function_sigs
-    arg_str = join(["$(ctype) $(aname)" for (aname, ctype) in args], ", ")
+    arg_str = isempty(args) ? "void" : join(["$(ctype) $(aname)" for (aname, ctype) in args], ", ")
     println(io, "$ret $name($arg_str);")
   end
 

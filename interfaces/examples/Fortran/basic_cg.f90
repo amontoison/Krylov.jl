@@ -36,8 +36,10 @@ program basic_cg
   ! -------------------------------------------------------------------------
   ! Create workspace
   ! -------------------------------------------------------------------------
-  ret = krylov_workspace_create(KRYLOV_CG, n, n, &
-                                KRYLOV_FLOAT64, KRYLOV_CPU, ws)
+  ret = krylov_workspace_create(KRYLOV_CG, n, n,            &
+                                KRYLOV_FLOAT64, KRYLOV_CPU, &
+                                c_null_ptr,                 &  ! workspace options (defaults)
+                                ws)
   if (ret /= 0) then
     write(*,*) "krylov_workspace_create failed:", ret
     stop 1
@@ -46,16 +48,21 @@ program basic_cg
   ! -------------------------------------------------------------------------
   ! Solve
   ! -------------------------------------------------------------------------
-  ret = krylov_solve(ws,                  &
-                     c_funloc(matvec_A),  &  ! y = A*x
-                     c_null_funptr,       &  ! y = A'*x  (CG doesn't need it)
-                     c_null_funptr,       &  ! no preconditioner
-                     c_loc(b),            &  ! right-hand side b (size m)
-                     c_null_ptr,          &  ! c = NULL  (CG only needs one RHS)
-                     c_loc(diag),         &  ! userdata: diagonal array
-                     1.0d-10, 1.0d-10,   &  ! atol, rtol
-                     0_c_int,             &  ! itmax: solver default
-                     0_c_int)                ! verbose: silent
+  block
+    type(KrylovOptions), target :: opts
+    opts = krylov_default_options()
+    opts%atol = 1.0d-10
+    opts%rtol = 1.0d-10
+
+    ret = krylov_solve(ws,                  &
+                       c_funloc(matvec_A),  &  ! y = A*x
+                       c_null_funptr,       &  ! y = A'*x  (CG doesn't need it)
+                       c_null_funptr,       &  ! no preconditioner
+                       c_loc(b),            &  ! right-hand side b (size m)
+                       c_null_ptr,          &  ! c = NULL  (CG only needs one RHS)
+                       c_loc(diag),         &  ! userdata: diagonal array
+                       c_loc(opts))            ! solver options
+  end block
   if (ret /= 0) then
     write(*,*) "krylov_solve failed:", ret
     ret = krylov_workspace_free(ws)

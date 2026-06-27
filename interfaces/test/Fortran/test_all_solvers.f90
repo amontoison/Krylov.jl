@@ -151,22 +151,28 @@ contains
     cur_n = n
 
     ret = krylov_workspace_create(solver, int(m, c_int), int(n, c_int), &
-                                  KRYLOV_FLOAT64, KRYLOV_CPU, ws)
+                                  KRYLOV_FLOAT64, KRYLOV_CPU, c_null_ptr, ws)
     if (ret /= 0) then
       write(*,'(A,I0)') "FAIL  workspace_create returned ", ret
       n_fail = n_fail + 1; return
     end if
 
-    ret = krylov_solve(ws,                                    &
-                       c_funloc(cb_matvec_A),               &
-                       merge(c_funloc(cb_matvec_At),        &
-                             c_null_funptr, need_At),        &
-                       c_null_funptr,                       &
-                       c_loc(b_vec),                        &
-                       merge(c_loc(c_vec), c_null_ptr, need_c), &
-                       c_null_ptr,                          &
-                       1.0d-8, 1.0d-8,                      &
-                       0_c_int, 0_c_int)
+    block
+      type(KrylovOptions), target :: opts
+      opts = krylov_default_options()
+      opts%atol = 1.0d-8
+      opts%rtol = 1.0d-8
+
+      ret = krylov_solve(ws,                                    &
+                         c_funloc(cb_matvec_A),               &
+                         merge(c_funloc(cb_matvec_At),        &
+                               c_null_funptr, need_At),        &
+                         c_null_funptr,                       &
+                         c_loc(b_vec),                        &
+                         merge(c_loc(c_vec), c_null_ptr, need_c), &
+                         c_null_ptr,                          &
+                         c_loc(opts))
+    end block
     if (ret /= 0) then
       write(*,'(A,I0)') "FAIL  krylov_solve returned ", ret
       ret = krylov_workspace_free(ws)

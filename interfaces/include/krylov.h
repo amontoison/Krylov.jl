@@ -61,6 +61,11 @@ typedef enum {
   KRYLOV_MINARES = 33,
 } KrylovSolverType;
 
+typedef enum {
+  KRYLOV_BLOCK_GMRES = 0,
+  KRYLOV_BLOCK_MINRES = 1,
+} KrylovBlockSolverType;
+
 /* -------------------------------------------------------------------------
  * Callback types
  *
@@ -68,16 +73,63 @@ typedef enum {
  *   x        : input vector  (read-only, length n)
  *   y        : output vector (write, length m)
  *   userdata : opaque pointer forwarded from krylov_solve
+ *
+ * KrylovBlockMatvec: block variant for block_gmres / block_minres.
+ *   X        : input  block (read-only, n*p, column-major)
+ *   Y        : output block (write,      m*p, column-major)
+ *   p        : block size (number of columns)
+ *   userdata : opaque pointer forwarded from krylov_block_solve
  * ------------------------------------------------------------------------- */
 
 typedef void (*KrylovMatvec)(const void *x, void *y, void *userdata);
+typedef void (*KrylovBlockMatvec)(const void *X, void *Y, int p, void *userdata);
 
 /* -------------------------------------------------------------------------
  * API functions
  * ------------------------------------------------------------------------- */
 
-int krylov_workspace_create(KrylovSolverType solver, int m, int n, KrylovDataType dtype, KrylovDeviceType device, void** ws_out);
-int krylov_solve(void* ws, KrylovMatvec matvec_A, KrylovMatvec matvec_At, KrylovMatvec matvec_M, const void* b, const void* c, void* userdata, double atol, double rtol, int itmax, int verbose);
+/* -------------------------------------------------------------------------
+ * Workspace options (construction-time)
+ *
+ * Passed to krylov_workspace_create.  These control how the workspace is
+ * allocated, so they belong to creation rather than to the solve call.
+ * Initialise with krylov_default_workspace_options() before overriding.
+ * Sentinel 0 means "use solver default".
+ *
+ * Fields ignored by a given solver are silently disregarded.
+ * ------------------------------------------------------------------------- */
+
+typedef struct {
+  int memory;  /* 0 → 20  (GMRES / FGMRES / FOM / DIOM / DQGMRES / GPMR)      */
+  int window;  /* 0 → 5   (MINRES / SYMMLQ / LSQR / LSMR / LSLQ)              */
+} KrylovWorkspaceOptions;
+
+/* -------------------------------------------------------------------------
+ * Solver options (solve-time)
+ *
+ * Passed to krylov_solve.  Initialise with krylov_default_options() before
+ * overriding individual fields.  Sentinel values mean "use solver default":
+ *   NaN  for double fields  (atol, rtol, tau, nu)
+ *   0    for int fields     (itmax)
+ *   0.0  for lambda         (no regularisation, which is the default)
+ *
+ * Fields ignored by a given solver are silently disregarded.
+ * ------------------------------------------------------------------------- */
+
+typedef struct {
+  double atol;    /* NaN  → sqrt(eps(T)) per precision                        */
+  double rtol;    /* NaN  → sqrt(eps(T)) per precision                        */
+  int    itmax;   /* 0    → solver default                                     */
+  int    verbose; /* 0    = silent                                             */
+  double lambda;  /* 0.0  = no regularisation (LSQR / LSMR / CGLS / ...)     */
+  double tau;     /* NaN  → solver default (TriCG / TriMR : 1.0)              */
+  double nu;      /* NaN  → solver default (TriCG / TriMR : -1.0)             */
+} KrylovOptions;
+
+int krylov_workspace_create(KrylovSolverType solver, int m, int n, KrylovDataType dtype, KrylovDeviceType device, const KrylovWorkspaceOptions* wopts, void** ws_out);
+KrylovWorkspaceOptions krylov_default_workspace_options(void);
+KrylovOptions krylov_default_options(void);
+int krylov_solve(void* ws, KrylovMatvec matvec_A, KrylovMatvec matvec_At, KrylovMatvec matvec_M, const void* b, const void* c, void* userdata, const KrylovOptions* opts);
 int krylov_get_x(void* ws, void* x, int n);
 int krylov_get_y(void* ws, void* y, int m);
 int krylov_is_solved(void* ws);
@@ -85,6 +137,14 @@ int krylov_niter(void* ws);
 double krylov_elapsed_time(void* ws);
 int krylov_warm_start(void* ws, const void* x0, int n);
 int krylov_workspace_free(void* ws);
+int krylov_block_workspace_create(KrylovBlockSolverType solver, int m, int n, int p, KrylovDataType dtype, KrylovDeviceType device, const KrylovWorkspaceOptions* wopts, void** ws_out);
+int krylov_block_solve(void* ws, KrylovBlockMatvec matvec_A, KrylovBlockMatvec matvec_M, const void* B, void* userdata, const KrylovOptions* opts);
+int krylov_block_get_X(void* ws, void* X, int n, int p);
+int krylov_block_is_solved(void* ws);
+int krylov_block_niter(void* ws);
+double krylov_block_elapsed_time(void* ws);
+int krylov_block_warm_start(void* ws, const void* x0, int n, int p);
+int krylov_block_workspace_free(void* ws);
 
 #ifdef __cplusplus
 }

@@ -179,6 +179,51 @@ jobs:
           interfaces/build/test_all_solvers_c
 
       # -----------------------------------------------------------------------
+      # Build and run the C behavioural test (options, preconditioner,
+      # warm start, error codes, reuse, Float32)
+      # -----------------------------------------------------------------------
+      - name: Build C test (API behaviour)
+        shell: bash
+        run: |
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
+          gcc -O2 -o interfaces/build/test_api_c \
+              interfaces/test/C/test_api.c \
+              -I interfaces/include \
+              "$LIBPATH/${{ matrix.lib }}" \
+              -lm
+
+      - name: Run C test (API behaviour)
+        shell: bash
+        run: |
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
+          export PATH="$LIBPATH:$PATH"
+          export LD_LIBRARY_PATH="$LIBPATH:${LD_LIBRARY_PATH:-}"
+          export DYLD_LIBRARY_PATH="$LIBPATH:${DYLD_LIBRARY_PATH:-}"
+          interfaces/build/test_api_c
+
+      # -----------------------------------------------------------------------
+      # Build and run the C block test (block_gmres / block_minres)
+      # -----------------------------------------------------------------------
+      - name: Build C test (block solvers)
+        shell: bash
+        run: |
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
+          gcc -O2 -o interfaces/build/test_block_c \
+              interfaces/test/C/test_block.c \
+              -I interfaces/include \
+              "$LIBPATH/${{ matrix.lib }}" \
+              -lm
+
+      - name: Run C test (block solvers)
+        shell: bash
+        run: |
+          LIBPATH="$(pwd)/interfaces/build/${{ matrix.libdir }}"
+          export PATH="$LIBPATH:$PATH"
+          export LD_LIBRARY_PATH="$LIBPATH:${LD_LIBRARY_PATH:-}"
+          export DYLD_LIBRARY_PATH="$LIBPATH:${DYLD_LIBRARY_PATH:-}"
+          interfaces/build/test_block_c
+
+      # -----------------------------------------------------------------------
       # Build and run the Fortran smoke test (basic_cg example)
       # -----------------------------------------------------------------------
       - name: Build Fortran example

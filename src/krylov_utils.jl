@@ -278,7 +278,12 @@ function matrix_to_vector(::Type{M}) where M <: DenseMatrix
   return S
 end
 
-function allocate_if(bool, workspace, v, ::Type{S}, u) where S
+# `@inline` is required so the literal field symbol `v` is constant-propagated
+# into the `setproperty!` call.  Otherwise `fieldtype(typeof(workspace), v)` is
+# computed from a runtime `Symbol`, which is not resolvable under
+# `juliac --trim=safe` (this only bit the larger block solvers, where the
+# inliner would otherwise leave `allocate_if` out-of-line).
+@inline function allocate_if(bool, workspace, v, ::Type{S}, u) where S
   start_allocation_time = time_ns()
   if bool && isempty(workspace.:($v)::S)
     workspace.:($v)::S = similar(u)
@@ -289,7 +294,7 @@ end
 
 # allocate_if(bool, workspace, v, ::Type{S}, n::Int) where S = bool && isempty(workspace.:($v)::S) && (workspace.:($v)::S = S(undef, n))
 
-function allocate_if(bool, workspace, v, ::Type{S}, m::Int, n::Int) where S
+@inline function allocate_if(bool, workspace, v, ::Type{S}, m::Int, n::Int) where S
   start_allocation_time = time_ns()
   if bool && isempty(workspace.:($v)::S)
     workspace.:($v)::S = S(undef, m, n)

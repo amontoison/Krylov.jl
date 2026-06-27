@@ -3,9 +3,12 @@
  *
  * A = tridiag(-1, 2, -1),  b = [1, 0, 0, 0, 1]^T
  *
- * Compile (after building libkrylov with CMake):
+ * Compile (after building libkrylov with juliac — see interfaces/README.md):
  *
- *   gcc -o basic_cg basic_cg.c -I../include -L../build -lkrylov -Wl,-rpath,../build
+ *   gcc -o basic_cg interfaces/examples/C/basic_cg.c \
+ *       -I interfaces/build/include \
+ *       interfaces/build/lib/libkrylov.so \
+ *       -Wl,-rpath,'$ORIGIN/../lib/julia'
  *
  * Expected output:
  *   Solved: yes   niter: 3   time: ...
@@ -70,6 +73,7 @@ int main(void)
   void *ws = NULL;
   int ret = krylov_workspace_create(KRYLOV_CG, N, N,
                                     KRYLOV_FLOAT64, KRYLOV_CPU,
+                                    NULL,    /* workspace options (NULL = defaults) */
                                     &ws);
   if (ret != 0) {
     fprintf(stderr, "krylov_workspace_create failed (%d)\n", ret);
@@ -79,6 +83,10 @@ int main(void)
   /* -----------------------------------------------------------------------
    * Solve
    * --------------------------------------------------------------------- */
+  KrylovOptions opts = krylov_default_options();
+  opts.atol = 1e-10;
+  opts.rtol = 1e-10;
+
   ret = krylov_solve(ws,
                      matvec_A,   /* y = A*x */
                      NULL,       /* y = A'*x  (CG doesn't need it) */
@@ -86,10 +94,7 @@ int main(void)
                      b,          /* right-hand side b (size m) */
                      NULL,       /* c = NULL  (CG only needs one RHS) */
                      &A,         /* userdata forwarded to matvec_A */
-                     1e-10,      /* atol */
-                     1e-10,      /* rtol */
-                     0,          /* itmax: use solver default */
-                     0);         /* verbose: silent */
+                     &opts);     /* solver options (NULL = all defaults) */
   if (ret != 0) {
     fprintf(stderr, "krylov_solve failed (%d)\n", ret);
     krylov_workspace_free(ws);

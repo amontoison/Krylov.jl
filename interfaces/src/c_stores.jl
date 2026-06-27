@@ -228,13 +228,27 @@ function _typed_warm_start!(ws::Krylov.KrylovWorkspace{T, FC, S}, x0_ptr, n) whe
   Cint(0)
 end
 
-# One-RHS solvers — c_ptr is always NULL (ignored)
-function _typed_solve!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose) where {T, FC, S}
+# ---------------------------------------------------------------------------
+# _opts_kw — build base keyword arguments from a KrylovOptionsC struct.
+# NaN sentinels fall back to the Julia solver default (√eps(T)).
+# itmax=0 is always passed explicitly; Krylov.jl interprets 0 as "use default".
+# The NamedTuple type is always the same concrete type — compatible with --trim=safe.
+# ---------------------------------------------------------------------------
+function _opts_kw(opts::KrylovOptionsC, ::Type{T}) where T
+  atol_v = isnan(opts.atol) ? sqrt(eps(T)) : T(opts.atol)
+  rtol_v = isnan(opts.rtol) ? sqrt(eps(T)) : T(opts.rtol)
+  (atol=atol_v, rtol=rtol_v, itmax=Int(opts.itmax), verbose=Int(opts.verbose))
+end
+
+# ---------------------------------------------------------------------------
+# _typed_solve! variants — one per option family
+# ---------------------------------------------------------------------------
+
+# Basic one-RHS solvers (no extra options beyond atol/rtol/itmax/verbose)
+function _typed_solve!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts) where {T, FC, S}
   A  = COperator{FC}(ws.m, ws.n, fptr_A, fptr_At, userdata)
   b  = unsafe_wrap(Vector{FC}, Ptr{FC}(b_ptr), ws.m)
-  it = itmax > 0 ? Int(itmax) : 0
-  kw = (atol=T(atol), rtol=T(rtol), verbose=Int(verbose))
-  kw = it > 0 ? merge(kw, (itmax=it,)) : kw
+  kw = _opts_kw(opts, T)
   if fptr_M != C_NULL
     M = CPreconditioner{FC}(ws.n, fptr_M, userdata)
     Krylov.krylov_solve!(ws, A, b; M=M, kw...)
@@ -244,32 +258,47 @@ function _typed_solve!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fp
   Cint(0)
 end
 
-# Two-RHS solvers — c_ptr points to a vector of length n
-function _typed_solve_two_rhs!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose) where {T, FC, S}
+# Least-squares solvers: adds λ (regularisation).
+# λ=0.0 is the Julia default, so always passing it is safe and avoids
+# a conditional merge that would produce a dynamically-typed NamedTuple.
+function _typed_solve_lambda!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts) where {T, FC, S}
+  A  = COperator{FC}(ws.m, ws.n, fptr_A, fptr_At, userdata)
+  b  = unsafe_wrap(Vector{FC}, Ptr{FC}(b_ptr), ws.m)
+  kw = _opts_kw(opts, T)
+  Krylov.krylov_solve!(ws, A, b; λ=T(opts.lambda), kw...)
+  Cint(0)
+end
+
+# TriCG / TriMR: two-RHS + τ and ν (quasi-definite diagonal parameters).
+# NaN sentinel → use Krylov.jl defaults (τ=1.0, ν=-1.0).
+function _typed_solve_tau_nu!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts) where {T, FC, S}
   A  = COperator{FC}(ws.m, ws.n, fptr_A, fptr_At, userdata)
   b  = unsafe_wrap(Vector{FC}, Ptr{FC}(b_ptr), ws.m)
   c  = unsafe_wrap(Vector{FC}, Ptr{FC}(c_ptr), ws.n)
-  it = itmax > 0 ? Int(itmax) : 0
-  kw = (atol=T(atol), rtol=T(rtol), verbose=Int(verbose))
-  kw = it > 0 ? merge(kw, (itmax=it,)) : kw
-  if fptr_M != C_NULL
-    M = CPreconditioner{FC}(ws.n, fptr_M, userdata)
-    Krylov.krylov_solve!(ws, A, b, c; M=M, kw...)
-  else
-    Krylov.krylov_solve!(ws, A, b, c; kw...)
-  end
+  kw = _opts_kw(opts, T)
+  τ  = isnan(opts.tau) ? T(1)  : T(opts.tau)
+  ν  = isnan(opts.nu)  ? T(-1) : T(opts.nu)
+  Krylov.krylov_solve!(ws, A, b, c; τ=τ, ν=ν, kw...)
+  Cint(0)
+end
+
+# Basic two-RHS solvers (BiLQR / TriLQR / USYMLQ / USYMQR / USYMLQR)
+function _typed_solve_two_rhs!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts) where {T, FC, S}
+  A  = COperator{FC}(ws.m, ws.n, fptr_A, fptr_At, userdata)
+  b  = unsafe_wrap(Vector{FC}, Ptr{FC}(b_ptr), ws.m)
+  c  = unsafe_wrap(Vector{FC}, Ptr{FC}(c_ptr), ws.n)
+  kw = _opts_kw(opts, T)
+  Krylov.krylov_solve!(ws, A, b, c; kw...)
   Cint(0)
 end
 
 # GPMR — fptr_At slot is repurposed as B (n×m), distinct from A (m×n)
-function _typed_solve_gpmr!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_B, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose) where {T, FC, S}
+function _typed_solve_gpmr!(ws::Krylov.KrylovWorkspace{T, FC, S}, fptr_A, fptr_B, fptr_M, b_ptr, c_ptr, userdata, opts) where {T, FC, S}
   A  = COperator{FC}(ws.m, ws.n, fptr_A, C_NULL, userdata)
   B  = COperator{FC}(ws.n, ws.m, fptr_B, C_NULL, userdata)
   b  = unsafe_wrap(Vector{FC}, Ptr{FC}(b_ptr), ws.m)
   c  = unsafe_wrap(Vector{FC}, Ptr{FC}(c_ptr), ws.n)
-  it = itmax > 0 ? Int(itmax) : 0
-  kw = (atol=T(atol), rtol=T(rtol), verbose=Int(verbose))
-  kw = it > 0 ? merge(kw, (itmax=it,)) : kw
+  kw = _opts_kw(opts, T)
   Krylov.krylov_solve!(ws, A, B, b, c; kw...)
   Cint(0)
 end
@@ -1131,145 +1160,146 @@ function _do_warm_start!(ws_ptr :: Ptr{Cvoid}, x0_ptr :: Ptr{Cvoid}, n :: Cint)
   else; Cint(-1); end
 end
 
-function _do_solve!(ws_ptr :: Ptr{Cvoid}, fptr_A :: Ptr{Cvoid}, fptr_At :: Ptr{Cvoid}, fptr_M :: Ptr{Cvoid}, b_ptr :: Ptr{Cvoid}, c_ptr :: Ptr{Cvoid}, userdata :: Ptr{Cvoid}, atol :: Cdouble, rtol :: Cdouble, itmax :: Cint, verbose :: Cint)
+function _do_solve!(ws_ptr :: Ptr{Cvoid}, fptr_A :: Ptr{Cvoid}, fptr_At :: Ptr{Cvoid}, fptr_M :: Ptr{Cvoid}, b_ptr :: Ptr{Cvoid}, c_ptr :: Ptr{Cvoid}, userdata :: Ptr{Cvoid}, opts_ptr :: Ptr{Cvoid})
   haskey(ws_key_store, ws_ptr) || return Cint(-1)
+  opts = opts_ptr == C_NULL ? KrylovOptionsC(NaN, NaN, Cint(0), Cint(0), 0.0, NaN, NaN) : unsafe_load(Ptr{KrylovOptionsC}(opts_ptr))
   k = ws_key_store[ws_ptr]
-  if k == 0x00; _typed_solve!(store_cg_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x01; _typed_solve!(store_cg_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x02; _typed_solve!(store_cg_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x03; _typed_solve!(store_cg_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x04; _typed_solve!(store_cr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x05; _typed_solve!(store_cr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x06; _typed_solve!(store_cr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x07; _typed_solve!(store_cr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x08; _typed_solve!(store_symmlq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x09; _typed_solve!(store_symmlq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x0a; _typed_solve!(store_symmlq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x0b; _typed_solve!(store_symmlq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x0c; _typed_solve!(store_minres_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x0d; _typed_solve!(store_minres_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x0e; _typed_solve!(store_minres_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x0f; _typed_solve!(store_minres_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x10; _typed_solve!(store_minres_qlp_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x11; _typed_solve!(store_minres_qlp_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x12; _typed_solve!(store_minres_qlp_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x13; _typed_solve!(store_minres_qlp_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x14; _typed_solve!(store_diom_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x15; _typed_solve!(store_diom_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x16; _typed_solve!(store_diom_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x17; _typed_solve!(store_diom_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x18; _typed_solve!(store_dqgmres_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x19; _typed_solve!(store_dqgmres_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x1a; _typed_solve!(store_dqgmres_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x1b; _typed_solve!(store_dqgmres_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x1c; _typed_solve!(store_fom_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x1d; _typed_solve!(store_fom_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x1e; _typed_solve!(store_fom_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x1f; _typed_solve!(store_fom_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x20; _typed_solve!(store_gmres_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x21; _typed_solve!(store_gmres_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x22; _typed_solve!(store_gmres_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x23; _typed_solve!(store_gmres_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x24; _typed_solve!(store_fgmres_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x25; _typed_solve!(store_fgmres_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x26; _typed_solve!(store_fgmres_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x27; _typed_solve!(store_fgmres_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x28; _typed_solve!(store_bicgstab_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x29; _typed_solve!(store_bicgstab_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x2a; _typed_solve!(store_bicgstab_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x2b; _typed_solve!(store_bicgstab_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x2c; _typed_solve!(store_cgs_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x2d; _typed_solve!(store_cgs_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x2e; _typed_solve!(store_cgs_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x2f; _typed_solve!(store_cgs_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x30; _typed_solve!(store_bilq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x31; _typed_solve!(store_bilq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x32; _typed_solve!(store_bilq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x33; _typed_solve!(store_bilq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x34; _typed_solve!(store_qmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x35; _typed_solve!(store_qmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x36; _typed_solve!(store_qmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x37; _typed_solve!(store_qmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x38; _typed_solve_two_rhs!(store_usymlq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x39; _typed_solve_two_rhs!(store_usymlq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x3a; _typed_solve_two_rhs!(store_usymlq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x3b; _typed_solve_two_rhs!(store_usymlq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x3c; _typed_solve_two_rhs!(store_usymqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x3d; _typed_solve_two_rhs!(store_usymqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x3e; _typed_solve_two_rhs!(store_usymqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x3f; _typed_solve_two_rhs!(store_usymqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x40; _typed_solve_two_rhs!(store_tricg_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x41; _typed_solve_two_rhs!(store_tricg_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x42; _typed_solve_two_rhs!(store_tricg_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x43; _typed_solve_two_rhs!(store_tricg_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x44; _typed_solve_two_rhs!(store_trimr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x45; _typed_solve_two_rhs!(store_trimr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x46; _typed_solve_two_rhs!(store_trimr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x47; _typed_solve_two_rhs!(store_trimr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x48; _typed_solve_two_rhs!(store_trilqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x49; _typed_solve_two_rhs!(store_trilqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x4a; _typed_solve_two_rhs!(store_trilqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x4b; _typed_solve_two_rhs!(store_trilqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x4c; _typed_solve_two_rhs!(store_bilqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x4d; _typed_solve_two_rhs!(store_bilqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x4e; _typed_solve_two_rhs!(store_bilqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x4f; _typed_solve_two_rhs!(store_bilqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x50; _typed_solve!(store_lslq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x51; _typed_solve!(store_lslq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x52; _typed_solve!(store_lslq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x53; _typed_solve!(store_lslq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x54; _typed_solve!(store_lsqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x55; _typed_solve!(store_lsqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x56; _typed_solve!(store_lsqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x57; _typed_solve!(store_lsqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x58; _typed_solve!(store_lsmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x59; _typed_solve!(store_lsmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x5a; _typed_solve!(store_lsmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x5b; _typed_solve!(store_lsmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x5c; _typed_solve_two_rhs!(store_usymlqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x5d; _typed_solve_two_rhs!(store_usymlqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x5e; _typed_solve_two_rhs!(store_usymlqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x5f; _typed_solve_two_rhs!(store_usymlqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x60; _typed_solve!(store_cgls_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x61; _typed_solve!(store_cgls_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x62; _typed_solve!(store_cgls_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x63; _typed_solve!(store_cgls_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x64; _typed_solve!(store_crls_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x65; _typed_solve!(store_crls_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x66; _typed_solve!(store_crls_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x67; _typed_solve!(store_crls_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x68; _typed_solve!(store_cgne_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x69; _typed_solve!(store_cgne_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x6a; _typed_solve!(store_cgne_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x6b; _typed_solve!(store_cgne_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x6c; _typed_solve!(store_crmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x6d; _typed_solve!(store_crmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x6e; _typed_solve!(store_crmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x6f; _typed_solve!(store_crmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x70; _typed_solve!(store_craig_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x71; _typed_solve!(store_craig_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x72; _typed_solve!(store_craig_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x73; _typed_solve!(store_craig_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x74; _typed_solve!(store_craigmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x75; _typed_solve!(store_craigmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x76; _typed_solve!(store_craigmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x77; _typed_solve!(store_craigmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x78; _typed_solve!(store_lnlq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x79; _typed_solve!(store_lnlq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x7a; _typed_solve!(store_lnlq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x7b; _typed_solve!(store_lnlq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x7c; _typed_solve_gpmr!(store_gpmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x7d; _typed_solve_gpmr!(store_gpmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x7e; _typed_solve_gpmr!(store_gpmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x7f; _typed_solve_gpmr!(store_gpmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x80; _typed_solve!(store_car_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x81; _typed_solve!(store_car_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x82; _typed_solve!(store_car_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x83; _typed_solve!(store_car_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x84; _typed_solve!(store_minares_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x85; _typed_solve!(store_minares_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x86; _typed_solve!(store_minares_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
-  elseif k == 0x87; _typed_solve!(store_minares_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, atol, rtol, itmax, verbose)
+  if k == 0x00; _typed_solve!(store_cg_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x01; _typed_solve!(store_cg_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x02; _typed_solve!(store_cg_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x03; _typed_solve!(store_cg_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x04; _typed_solve!(store_cr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x05; _typed_solve!(store_cr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x06; _typed_solve!(store_cr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x07; _typed_solve!(store_cr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x08; _typed_solve!(store_symmlq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x09; _typed_solve!(store_symmlq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x0a; _typed_solve!(store_symmlq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x0b; _typed_solve!(store_symmlq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x0c; _typed_solve!(store_minres_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x0d; _typed_solve!(store_minres_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x0e; _typed_solve!(store_minres_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x0f; _typed_solve!(store_minres_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x10; _typed_solve!(store_minres_qlp_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x11; _typed_solve!(store_minres_qlp_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x12; _typed_solve!(store_minres_qlp_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x13; _typed_solve!(store_minres_qlp_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x14; _typed_solve!(store_diom_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x15; _typed_solve!(store_diom_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x16; _typed_solve!(store_diom_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x17; _typed_solve!(store_diom_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x18; _typed_solve!(store_dqgmres_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x19; _typed_solve!(store_dqgmres_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x1a; _typed_solve!(store_dqgmres_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x1b; _typed_solve!(store_dqgmres_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x1c; _typed_solve!(store_fom_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x1d; _typed_solve!(store_fom_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x1e; _typed_solve!(store_fom_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x1f; _typed_solve!(store_fom_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x20; _typed_solve!(store_gmres_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x21; _typed_solve!(store_gmres_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x22; _typed_solve!(store_gmres_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x23; _typed_solve!(store_gmres_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x24; _typed_solve!(store_fgmres_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x25; _typed_solve!(store_fgmres_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x26; _typed_solve!(store_fgmres_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x27; _typed_solve!(store_fgmres_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x28; _typed_solve!(store_bicgstab_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x29; _typed_solve!(store_bicgstab_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x2a; _typed_solve!(store_bicgstab_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x2b; _typed_solve!(store_bicgstab_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x2c; _typed_solve!(store_cgs_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x2d; _typed_solve!(store_cgs_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x2e; _typed_solve!(store_cgs_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x2f; _typed_solve!(store_cgs_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x30; _typed_solve!(store_bilq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x31; _typed_solve!(store_bilq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x32; _typed_solve!(store_bilq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x33; _typed_solve!(store_bilq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x34; _typed_solve!(store_qmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x35; _typed_solve!(store_qmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x36; _typed_solve!(store_qmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x37; _typed_solve!(store_qmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x38; _typed_solve_two_rhs!(store_usymlq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x39; _typed_solve_two_rhs!(store_usymlq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x3a; _typed_solve_two_rhs!(store_usymlq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x3b; _typed_solve_two_rhs!(store_usymlq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x3c; _typed_solve_two_rhs!(store_usymqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x3d; _typed_solve_two_rhs!(store_usymqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x3e; _typed_solve_two_rhs!(store_usymqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x3f; _typed_solve_two_rhs!(store_usymqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x40; _typed_solve_tau_nu!(store_tricg_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x41; _typed_solve_tau_nu!(store_tricg_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x42; _typed_solve_tau_nu!(store_tricg_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x43; _typed_solve_tau_nu!(store_tricg_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x44; _typed_solve_tau_nu!(store_trimr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x45; _typed_solve_tau_nu!(store_trimr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x46; _typed_solve_tau_nu!(store_trimr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x47; _typed_solve_tau_nu!(store_trimr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x48; _typed_solve_two_rhs!(store_trilqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x49; _typed_solve_two_rhs!(store_trilqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x4a; _typed_solve_two_rhs!(store_trilqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x4b; _typed_solve_two_rhs!(store_trilqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x4c; _typed_solve_two_rhs!(store_bilqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x4d; _typed_solve_two_rhs!(store_bilqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x4e; _typed_solve_two_rhs!(store_bilqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x4f; _typed_solve_two_rhs!(store_bilqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x50; _typed_solve_lambda!(store_lslq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x51; _typed_solve_lambda!(store_lslq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x52; _typed_solve_lambda!(store_lslq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x53; _typed_solve_lambda!(store_lslq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x54; _typed_solve_lambda!(store_lsqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x55; _typed_solve_lambda!(store_lsqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x56; _typed_solve_lambda!(store_lsqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x57; _typed_solve_lambda!(store_lsqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x58; _typed_solve_lambda!(store_lsmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x59; _typed_solve_lambda!(store_lsmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x5a; _typed_solve_lambda!(store_lsmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x5b; _typed_solve_lambda!(store_lsmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x5c; _typed_solve_two_rhs!(store_usymlqr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x5d; _typed_solve_two_rhs!(store_usymlqr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x5e; _typed_solve_two_rhs!(store_usymlqr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x5f; _typed_solve_two_rhs!(store_usymlqr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x60; _typed_solve_lambda!(store_cgls_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x61; _typed_solve_lambda!(store_cgls_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x62; _typed_solve_lambda!(store_cgls_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x63; _typed_solve_lambda!(store_cgls_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x64; _typed_solve_lambda!(store_crls_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x65; _typed_solve_lambda!(store_crls_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x66; _typed_solve_lambda!(store_crls_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x67; _typed_solve_lambda!(store_crls_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x68; _typed_solve!(store_cgne_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x69; _typed_solve!(store_cgne_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x6a; _typed_solve!(store_cgne_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x6b; _typed_solve!(store_cgne_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x6c; _typed_solve!(store_crmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x6d; _typed_solve!(store_crmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x6e; _typed_solve!(store_crmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x6f; _typed_solve!(store_crmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x70; _typed_solve_lambda!(store_craig_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x71; _typed_solve_lambda!(store_craig_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x72; _typed_solve_lambda!(store_craig_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x73; _typed_solve_lambda!(store_craig_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x74; _typed_solve_lambda!(store_craigmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x75; _typed_solve_lambda!(store_craigmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x76; _typed_solve_lambda!(store_craigmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x77; _typed_solve_lambda!(store_craigmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x78; _typed_solve_lambda!(store_lnlq_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x79; _typed_solve_lambda!(store_lnlq_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x7a; _typed_solve_lambda!(store_lnlq_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x7b; _typed_solve_lambda!(store_lnlq_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x7c; _typed_solve_gpmr!(store_gpmr_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x7d; _typed_solve_gpmr!(store_gpmr_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x7e; _typed_solve_gpmr!(store_gpmr_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x7f; _typed_solve_gpmr!(store_gpmr_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x80; _typed_solve!(store_car_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x81; _typed_solve!(store_car_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x82; _typed_solve!(store_car_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x83; _typed_solve!(store_car_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x84; _typed_solve!(store_minares_f32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x85; _typed_solve!(store_minares_f64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x86; _typed_solve!(store_minares_cf32[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
+  elseif k == 0x87; _typed_solve!(store_minares_cf64[ws_ptr], fptr_A, fptr_At, fptr_M, b_ptr, c_ptr, userdata, opts)
   else; Cint(-1); end
 end
 
@@ -1418,7 +1448,10 @@ function _do_free!(ws_ptr :: Ptr{Cvoid})
 end
 
 function _do_create!(solver_int :: Cint, m :: Cint, n :: Cint,
-                     dtype_int :: Cint, ws_out :: Ptr{Ptr{Cvoid}})
+                     dtype_int :: Cint, wopts :: KrylovWorkspaceOptionsC,
+                     ws_out :: Ptr{Ptr{Cvoid}})
+  mem = wopts.memory == 0 ? 20 : Int(wopts.memory)
+  win = wopts.window == 0 ? 5 : Int(wopts.window)
   if solver_int == Cint(0) && dtype_int == Cint(0)
     ws = Krylov.CgWorkspace(Int(m), Int(n), Vector{Float32})
     r  = Base.pointer_from_objref(ws)
@@ -1460,42 +1493,42 @@ function _do_create!(solver_int :: Cint, m :: Cint, n :: Cint,
     store_cr_cf64[r] = ws; ws_key_store[r] = 0x07
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(2) && dtype_int == Cint(0)
-    ws = Krylov.SymmlqWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.SymmlqWorkspace(Int(m), Int(n), Vector{Float32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_symmlq_f32[r] = ws; ws_key_store[r] = 0x08
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(2) && dtype_int == Cint(1)
-    ws = Krylov.SymmlqWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.SymmlqWorkspace(Int(m), Int(n), Vector{Float64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_symmlq_f64[r] = ws; ws_key_store[r] = 0x09
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(2) && dtype_int == Cint(2)
-    ws = Krylov.SymmlqWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.SymmlqWorkspace(Int(m), Int(n), Vector{ComplexF32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_symmlq_cf32[r] = ws; ws_key_store[r] = 0x0a
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(2) && dtype_int == Cint(3)
-    ws = Krylov.SymmlqWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.SymmlqWorkspace(Int(m), Int(n), Vector{ComplexF64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_symmlq_cf64[r] = ws; ws_key_store[r] = 0x0b
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(3) && dtype_int == Cint(0)
-    ws = Krylov.MinresWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.MinresWorkspace(Int(m), Int(n), Vector{Float32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_minres_f32[r] = ws; ws_key_store[r] = 0x0c
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(3) && dtype_int == Cint(1)
-    ws = Krylov.MinresWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.MinresWorkspace(Int(m), Int(n), Vector{Float64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_minres_f64[r] = ws; ws_key_store[r] = 0x0d
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(3) && dtype_int == Cint(2)
-    ws = Krylov.MinresWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.MinresWorkspace(Int(m), Int(n), Vector{ComplexF32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_minres_cf32[r] = ws; ws_key_store[r] = 0x0e
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(3) && dtype_int == Cint(3)
-    ws = Krylov.MinresWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.MinresWorkspace(Int(m), Int(n), Vector{ComplexF64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_minres_cf64[r] = ws; ws_key_store[r] = 0x0f
     unsafe_store!(ws_out, r)
@@ -1520,102 +1553,102 @@ function _do_create!(solver_int :: Cint, m :: Cint, n :: Cint,
     store_minres_qlp_cf64[r] = ws; ws_key_store[r] = 0x13
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(5) && dtype_int == Cint(0)
-    ws = Krylov.DiomWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.DiomWorkspace(Int(m), Int(n), Vector{Float32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_diom_f32[r] = ws; ws_key_store[r] = 0x14
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(5) && dtype_int == Cint(1)
-    ws = Krylov.DiomWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.DiomWorkspace(Int(m), Int(n), Vector{Float64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_diom_f64[r] = ws; ws_key_store[r] = 0x15
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(5) && dtype_int == Cint(2)
-    ws = Krylov.DiomWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.DiomWorkspace(Int(m), Int(n), Vector{ComplexF32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_diom_cf32[r] = ws; ws_key_store[r] = 0x16
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(5) && dtype_int == Cint(3)
-    ws = Krylov.DiomWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.DiomWorkspace(Int(m), Int(n), Vector{ComplexF64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_diom_cf64[r] = ws; ws_key_store[r] = 0x17
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(6) && dtype_int == Cint(0)
-    ws = Krylov.DqgmresWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.DqgmresWorkspace(Int(m), Int(n), Vector{Float32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_dqgmres_f32[r] = ws; ws_key_store[r] = 0x18
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(6) && dtype_int == Cint(1)
-    ws = Krylov.DqgmresWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.DqgmresWorkspace(Int(m), Int(n), Vector{Float64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_dqgmres_f64[r] = ws; ws_key_store[r] = 0x19
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(6) && dtype_int == Cint(2)
-    ws = Krylov.DqgmresWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.DqgmresWorkspace(Int(m), Int(n), Vector{ComplexF32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_dqgmres_cf32[r] = ws; ws_key_store[r] = 0x1a
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(6) && dtype_int == Cint(3)
-    ws = Krylov.DqgmresWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.DqgmresWorkspace(Int(m), Int(n), Vector{ComplexF64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_dqgmres_cf64[r] = ws; ws_key_store[r] = 0x1b
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(7) && dtype_int == Cint(0)
-    ws = Krylov.FomWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.FomWorkspace(Int(m), Int(n), Vector{Float32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_fom_f32[r] = ws; ws_key_store[r] = 0x1c
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(7) && dtype_int == Cint(1)
-    ws = Krylov.FomWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.FomWorkspace(Int(m), Int(n), Vector{Float64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_fom_f64[r] = ws; ws_key_store[r] = 0x1d
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(7) && dtype_int == Cint(2)
-    ws = Krylov.FomWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.FomWorkspace(Int(m), Int(n), Vector{ComplexF32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_fom_cf32[r] = ws; ws_key_store[r] = 0x1e
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(7) && dtype_int == Cint(3)
-    ws = Krylov.FomWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.FomWorkspace(Int(m), Int(n), Vector{ComplexF64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_fom_cf64[r] = ws; ws_key_store[r] = 0x1f
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(8) && dtype_int == Cint(0)
-    ws = Krylov.GmresWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.GmresWorkspace(Int(m), Int(n), Vector{Float32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_gmres_f32[r] = ws; ws_key_store[r] = 0x20
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(8) && dtype_int == Cint(1)
-    ws = Krylov.GmresWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.GmresWorkspace(Int(m), Int(n), Vector{Float64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_gmres_f64[r] = ws; ws_key_store[r] = 0x21
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(8) && dtype_int == Cint(2)
-    ws = Krylov.GmresWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.GmresWorkspace(Int(m), Int(n), Vector{ComplexF32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_gmres_cf32[r] = ws; ws_key_store[r] = 0x22
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(8) && dtype_int == Cint(3)
-    ws = Krylov.GmresWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.GmresWorkspace(Int(m), Int(n), Vector{ComplexF64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_gmres_cf64[r] = ws; ws_key_store[r] = 0x23
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(9) && dtype_int == Cint(0)
-    ws = Krylov.FgmresWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.FgmresWorkspace(Int(m), Int(n), Vector{Float32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_fgmres_f32[r] = ws; ws_key_store[r] = 0x24
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(9) && dtype_int == Cint(1)
-    ws = Krylov.FgmresWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.FgmresWorkspace(Int(m), Int(n), Vector{Float64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_fgmres_f64[r] = ws; ws_key_store[r] = 0x25
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(9) && dtype_int == Cint(2)
-    ws = Krylov.FgmresWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.FgmresWorkspace(Int(m), Int(n), Vector{ComplexF32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_fgmres_cf32[r] = ws; ws_key_store[r] = 0x26
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(9) && dtype_int == Cint(3)
-    ws = Krylov.FgmresWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.FgmresWorkspace(Int(m), Int(n), Vector{ComplexF64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_fgmres_cf64[r] = ws; ws_key_store[r] = 0x27
     unsafe_store!(ws_out, r)
@@ -1820,62 +1853,62 @@ function _do_create!(solver_int :: Cint, m :: Cint, n :: Cint,
     store_bilqr_cf64[r] = ws; ws_key_store[r] = 0x4f
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(20) && dtype_int == Cint(0)
-    ws = Krylov.LslqWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.LslqWorkspace(Int(m), Int(n), Vector{Float32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lslq_f32[r] = ws; ws_key_store[r] = 0x50
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(20) && dtype_int == Cint(1)
-    ws = Krylov.LslqWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.LslqWorkspace(Int(m), Int(n), Vector{Float64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lslq_f64[r] = ws; ws_key_store[r] = 0x51
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(20) && dtype_int == Cint(2)
-    ws = Krylov.LslqWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.LslqWorkspace(Int(m), Int(n), Vector{ComplexF32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lslq_cf32[r] = ws; ws_key_store[r] = 0x52
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(20) && dtype_int == Cint(3)
-    ws = Krylov.LslqWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.LslqWorkspace(Int(m), Int(n), Vector{ComplexF64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lslq_cf64[r] = ws; ws_key_store[r] = 0x53
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(21) && dtype_int == Cint(0)
-    ws = Krylov.LsqrWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.LsqrWorkspace(Int(m), Int(n), Vector{Float32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lsqr_f32[r] = ws; ws_key_store[r] = 0x54
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(21) && dtype_int == Cint(1)
-    ws = Krylov.LsqrWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.LsqrWorkspace(Int(m), Int(n), Vector{Float64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lsqr_f64[r] = ws; ws_key_store[r] = 0x55
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(21) && dtype_int == Cint(2)
-    ws = Krylov.LsqrWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.LsqrWorkspace(Int(m), Int(n), Vector{ComplexF32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lsqr_cf32[r] = ws; ws_key_store[r] = 0x56
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(21) && dtype_int == Cint(3)
-    ws = Krylov.LsqrWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.LsqrWorkspace(Int(m), Int(n), Vector{ComplexF64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lsqr_cf64[r] = ws; ws_key_store[r] = 0x57
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(22) && dtype_int == Cint(0)
-    ws = Krylov.LsmrWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.LsmrWorkspace(Int(m), Int(n), Vector{Float32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lsmr_f32[r] = ws; ws_key_store[r] = 0x58
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(22) && dtype_int == Cint(1)
-    ws = Krylov.LsmrWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.LsmrWorkspace(Int(m), Int(n), Vector{Float64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lsmr_f64[r] = ws; ws_key_store[r] = 0x59
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(22) && dtype_int == Cint(2)
-    ws = Krylov.LsmrWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.LsmrWorkspace(Int(m), Int(n), Vector{ComplexF32}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lsmr_cf32[r] = ws; ws_key_store[r] = 0x5a
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(22) && dtype_int == Cint(3)
-    ws = Krylov.LsmrWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.LsmrWorkspace(Int(m), Int(n), Vector{ComplexF64}; window = win)
     r  = Base.pointer_from_objref(ws)
     store_lsmr_cf64[r] = ws; ws_key_store[r] = 0x5b
     unsafe_store!(ws_out, r)
@@ -2040,22 +2073,22 @@ function _do_create!(solver_int :: Cint, m :: Cint, n :: Cint,
     store_lnlq_cf64[r] = ws; ws_key_store[r] = 0x7b
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(31) && dtype_int == Cint(0)
-    ws = Krylov.GpmrWorkspace(Int(m), Int(n), Vector{Float32})
+    ws = Krylov.GpmrWorkspace(Int(m), Int(n), Vector{Float32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_gpmr_f32[r] = ws; ws_key_store[r] = 0x7c
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(31) && dtype_int == Cint(1)
-    ws = Krylov.GpmrWorkspace(Int(m), Int(n), Vector{Float64})
+    ws = Krylov.GpmrWorkspace(Int(m), Int(n), Vector{Float64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_gpmr_f64[r] = ws; ws_key_store[r] = 0x7d
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(31) && dtype_int == Cint(2)
-    ws = Krylov.GpmrWorkspace(Int(m), Int(n), Vector{ComplexF32})
+    ws = Krylov.GpmrWorkspace(Int(m), Int(n), Vector{ComplexF32}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_gpmr_cf32[r] = ws; ws_key_store[r] = 0x7e
     unsafe_store!(ws_out, r)
   elseif solver_int == Cint(31) && dtype_int == Cint(3)
-    ws = Krylov.GpmrWorkspace(Int(m), Int(n), Vector{ComplexF64})
+    ws = Krylov.GpmrWorkspace(Int(m), Int(n), Vector{ComplexF64}; memory = mem)
     r  = Base.pointer_from_objref(ws)
     store_gpmr_cf64[r] = ws; ws_key_store[r] = 0x7f
     unsafe_store!(ws_out, r)
@@ -2101,6 +2134,223 @@ function _do_create!(solver_int :: Cint, m :: Cint, n :: Cint,
     unsafe_store!(ws_out, r)
   else
     return Cint(-2)  # unknown (solver, dtype) combination
+  end
+  Cint(0)
+end
+
+# ---------------------------------------------------------------------------
+# Block Krylov stores — 2 solvers × 4 precisions = 8 combos.
+# SV = Vector{FC}, SM = Matrix{FC}.  Keyed separately from the scalar stores.
+# ---------------------------------------------------------------------------
+
+const store_block_gmres_f32 = Dict{Ptr{Cvoid}, Krylov.BlockGmresWorkspace{Float32, Float32, Vector{Float32}, Matrix{Float32}}}()
+const store_block_gmres_f64 = Dict{Ptr{Cvoid}, Krylov.BlockGmresWorkspace{Float64, Float64, Vector{Float64}, Matrix{Float64}}}()
+const store_block_gmres_cf32 = Dict{Ptr{Cvoid}, Krylov.BlockGmresWorkspace{Float32, ComplexF32, Vector{ComplexF32}, Matrix{ComplexF32}}}()
+const store_block_gmres_cf64 = Dict{Ptr{Cvoid}, Krylov.BlockGmresWorkspace{Float64, ComplexF64, Vector{ComplexF64}, Matrix{ComplexF64}}}()
+
+const store_block_minres_f32 = Dict{Ptr{Cvoid}, Krylov.BlockMinresWorkspace{Float32, Float32, Vector{Float32}, Matrix{Float32}}}()
+const store_block_minres_f64 = Dict{Ptr{Cvoid}, Krylov.BlockMinresWorkspace{Float64, Float64, Vector{Float64}, Matrix{Float64}}}()
+const store_block_minres_cf32 = Dict{Ptr{Cvoid}, Krylov.BlockMinresWorkspace{Float32, ComplexF32, Vector{ComplexF32}, Matrix{ComplexF32}}}()
+const store_block_minres_cf64 = Dict{Ptr{Cvoid}, Krylov.BlockMinresWorkspace{Float64, ComplexF64, Vector{ComplexF64}, Matrix{ComplexF64}}}()
+
+const block_ws_key_store = Dict{Ptr{Cvoid}, UInt8}()
+
+# ---------------------------------------------------------------------------
+# Generic typed helpers for block workspaces.
+# ---------------------------------------------------------------------------
+function _typed_block_niter(ws)
+  Cint(ws.stats.niter)
+end
+
+function _typed_block_is_solved(ws)
+  ws.stats.solved ? Cint(1) : Cint(0)
+end
+
+function _typed_block_elapsed_time(ws)
+  Cdouble(ws.stats.timer)
+end
+
+function _typed_block_get_X!(ws::Krylov.BlockKrylovWorkspace{T, FC, SV, SM}, X_ptr, n, p) where {T, FC, SV, SM}
+  copyto!(unsafe_wrap(Matrix{FC}, Ptr{FC}(X_ptr), (Int(n), Int(p))), ws.X)
+  Cint(0)
+end
+
+function _typed_block_warm_start!(ws::Krylov.BlockKrylovWorkspace{T, FC, SV, SM}, X0_ptr, n, p) where {T, FC, SV, SM}
+  X0 = unsafe_wrap(Matrix{FC}, Ptr{FC}(X0_ptr), (Int(n), Int(p)))
+  if size(ws.ΔX) != (ws.n, ws.p)
+    ws.ΔX = SM(undef, ws.n, ws.p)
+  end
+  copyto!(ws.ΔX, X0)
+  ws.warm_start = true
+  Cint(0)
+end
+
+# Block solve — uses the GENERIC krylov_solve! (dispatch on the workspace type
+# picks block_gmres! / block_minres!).  Going through the generic interface is
+# what makes the call trim-safe: it forwards every keyword with its default
+# (restart=false, ldiv=false, …) as a literal, so allocate_if(restart, …) is
+# constant-folded away — a direct block_gmres! call is NOT trim-safe.
+# Supports an optional preconditioner M (applied as Y = M⁻¹X).
+function _typed_block_solve!(ws::Krylov.BlockKrylovWorkspace{T, FC, SV, SM}, fptr_A, fptr_M, B_ptr, userdata, opts) where {T, FC, SV, SM}
+  A  = CBlockOperator{FC}(ws.m, ws.n, fptr_A, userdata)
+  B  = unsafe_wrap(Matrix{FC}, Ptr{FC}(B_ptr), (ws.m, ws.p))
+  kw = _opts_kw(opts, T)
+  if fptr_M != C_NULL
+    M = CBlockOperator{FC}(ws.n, ws.n, fptr_M, userdata)
+    Krylov.krylov_solve!(ws, A, B; M=M, kw...)
+  else
+    Krylov.krylov_solve!(ws, A, B; kw...)
+  end
+  Cint(0)
+end
+
+function _do_block_niter(ws_ptr :: Ptr{Cvoid})
+  haskey(block_ws_key_store, ws_ptr) || return Cint(-1)
+  k = block_ws_key_store[ws_ptr]
+  if k == 0x00; _typed_block_niter(store_block_gmres_f32[ws_ptr])
+  elseif k == 0x01; _typed_block_niter(store_block_gmres_f64[ws_ptr])
+  elseif k == 0x02; _typed_block_niter(store_block_gmres_cf32[ws_ptr])
+  elseif k == 0x03; _typed_block_niter(store_block_gmres_cf64[ws_ptr])
+  elseif k == 0x04; _typed_block_niter(store_block_minres_f32[ws_ptr])
+  elseif k == 0x05; _typed_block_niter(store_block_minres_f64[ws_ptr])
+  elseif k == 0x06; _typed_block_niter(store_block_minres_cf32[ws_ptr])
+  elseif k == 0x07; _typed_block_niter(store_block_minres_cf64[ws_ptr])
+  else; Cint(-1); end
+end
+
+function _do_block_is_solved(ws_ptr :: Ptr{Cvoid})
+  haskey(block_ws_key_store, ws_ptr) || return Cint(-1)
+  k = block_ws_key_store[ws_ptr]
+  if k == 0x00; _typed_block_is_solved(store_block_gmres_f32[ws_ptr])
+  elseif k == 0x01; _typed_block_is_solved(store_block_gmres_f64[ws_ptr])
+  elseif k == 0x02; _typed_block_is_solved(store_block_gmres_cf32[ws_ptr])
+  elseif k == 0x03; _typed_block_is_solved(store_block_gmres_cf64[ws_ptr])
+  elseif k == 0x04; _typed_block_is_solved(store_block_minres_f32[ws_ptr])
+  elseif k == 0x05; _typed_block_is_solved(store_block_minres_f64[ws_ptr])
+  elseif k == 0x06; _typed_block_is_solved(store_block_minres_cf32[ws_ptr])
+  elseif k == 0x07; _typed_block_is_solved(store_block_minres_cf64[ws_ptr])
+  else; Cint(-1); end
+end
+
+function _do_block_elapsed_time(ws_ptr :: Ptr{Cvoid})
+  haskey(block_ws_key_store, ws_ptr) || return Cdouble(-1.0)
+  k = block_ws_key_store[ws_ptr]
+  if k == 0x00; _typed_block_elapsed_time(store_block_gmres_f32[ws_ptr])
+  elseif k == 0x01; _typed_block_elapsed_time(store_block_gmres_f64[ws_ptr])
+  elseif k == 0x02; _typed_block_elapsed_time(store_block_gmres_cf32[ws_ptr])
+  elseif k == 0x03; _typed_block_elapsed_time(store_block_gmres_cf64[ws_ptr])
+  elseif k == 0x04; _typed_block_elapsed_time(store_block_minres_f32[ws_ptr])
+  elseif k == 0x05; _typed_block_elapsed_time(store_block_minres_f64[ws_ptr])
+  elseif k == 0x06; _typed_block_elapsed_time(store_block_minres_cf32[ws_ptr])
+  elseif k == 0x07; _typed_block_elapsed_time(store_block_minres_cf64[ws_ptr])
+  else; Cdouble(-1.0); end
+end
+
+function _do_block_get_X!(ws_ptr :: Ptr{Cvoid}, X_ptr :: Ptr{Cvoid}, n :: Cint, p :: Cint)
+  haskey(block_ws_key_store, ws_ptr) || return Cint(-1)
+  k = block_ws_key_store[ws_ptr]
+  if k == 0x00; _typed_block_get_X!(store_block_gmres_f32[ws_ptr], X_ptr, n, p)
+  elseif k == 0x01; _typed_block_get_X!(store_block_gmres_f64[ws_ptr], X_ptr, n, p)
+  elseif k == 0x02; _typed_block_get_X!(store_block_gmres_cf32[ws_ptr], X_ptr, n, p)
+  elseif k == 0x03; _typed_block_get_X!(store_block_gmres_cf64[ws_ptr], X_ptr, n, p)
+  elseif k == 0x04; _typed_block_get_X!(store_block_minres_f32[ws_ptr], X_ptr, n, p)
+  elseif k == 0x05; _typed_block_get_X!(store_block_minres_f64[ws_ptr], X_ptr, n, p)
+  elseif k == 0x06; _typed_block_get_X!(store_block_minres_cf32[ws_ptr], X_ptr, n, p)
+  elseif k == 0x07; _typed_block_get_X!(store_block_minres_cf64[ws_ptr], X_ptr, n, p)
+  else; Cint(-1); end
+end
+
+function _do_block_warm_start!(ws_ptr :: Ptr{Cvoid}, X0_ptr :: Ptr{Cvoid}, n :: Cint, p :: Cint)
+  haskey(block_ws_key_store, ws_ptr) || return Cint(-1)
+  k = block_ws_key_store[ws_ptr]
+  if k == 0x00; _typed_block_warm_start!(store_block_gmres_f32[ws_ptr], X0_ptr, n, p)
+  elseif k == 0x01; _typed_block_warm_start!(store_block_gmres_f64[ws_ptr], X0_ptr, n, p)
+  elseif k == 0x02; _typed_block_warm_start!(store_block_gmres_cf32[ws_ptr], X0_ptr, n, p)
+  elseif k == 0x03; _typed_block_warm_start!(store_block_gmres_cf64[ws_ptr], X0_ptr, n, p)
+  elseif k == 0x04; _typed_block_warm_start!(store_block_minres_f32[ws_ptr], X0_ptr, n, p)
+  elseif k == 0x05; _typed_block_warm_start!(store_block_minres_f64[ws_ptr], X0_ptr, n, p)
+  elseif k == 0x06; _typed_block_warm_start!(store_block_minres_cf32[ws_ptr], X0_ptr, n, p)
+  elseif k == 0x07; _typed_block_warm_start!(store_block_minres_cf64[ws_ptr], X0_ptr, n, p)
+  else; Cint(-1); end
+end
+
+function _do_block_solve!(ws_ptr :: Ptr{Cvoid}, fptr_A :: Ptr{Cvoid}, fptr_M :: Ptr{Cvoid}, B_ptr :: Ptr{Cvoid}, userdata :: Ptr{Cvoid}, opts_ptr :: Ptr{Cvoid})
+  haskey(block_ws_key_store, ws_ptr) || return Cint(-1)
+  opts = opts_ptr == C_NULL ? KrylovOptionsC(NaN, NaN, Cint(0), Cint(0), 0.0, NaN, NaN) : unsafe_load(Ptr{KrylovOptionsC}(opts_ptr))
+  k = block_ws_key_store[ws_ptr]
+  if k == 0x00; _typed_block_solve!(store_block_gmres_f32[ws_ptr], fptr_A, fptr_M, B_ptr, userdata, opts)
+  elseif k == 0x01; _typed_block_solve!(store_block_gmres_f64[ws_ptr], fptr_A, fptr_M, B_ptr, userdata, opts)
+  elseif k == 0x02; _typed_block_solve!(store_block_gmres_cf32[ws_ptr], fptr_A, fptr_M, B_ptr, userdata, opts)
+  elseif k == 0x03; _typed_block_solve!(store_block_gmres_cf64[ws_ptr], fptr_A, fptr_M, B_ptr, userdata, opts)
+  elseif k == 0x04; _typed_block_solve!(store_block_minres_f32[ws_ptr], fptr_A, fptr_M, B_ptr, userdata, opts)
+  elseif k == 0x05; _typed_block_solve!(store_block_minres_f64[ws_ptr], fptr_A, fptr_M, B_ptr, userdata, opts)
+  elseif k == 0x06; _typed_block_solve!(store_block_minres_cf32[ws_ptr], fptr_A, fptr_M, B_ptr, userdata, opts)
+  elseif k == 0x07; _typed_block_solve!(store_block_minres_cf64[ws_ptr], fptr_A, fptr_M, B_ptr, userdata, opts)
+  else; Cint(-1); end
+end
+
+function _do_block_free!(ws_ptr :: Ptr{Cvoid})
+  haskey(block_ws_key_store, ws_ptr) || return Cint(1)
+  k = block_ws_key_store[ws_ptr]
+  delete!(block_ws_key_store, ws_ptr)
+  if k == 0x00; delete!(store_block_gmres_f32, ws_ptr)
+  elseif k == 0x01; delete!(store_block_gmres_f64, ws_ptr)
+  elseif k == 0x02; delete!(store_block_gmres_cf32, ws_ptr)
+  elseif k == 0x03; delete!(store_block_gmres_cf64, ws_ptr)
+  elseif k == 0x04; delete!(store_block_minres_f32, ws_ptr)
+  elseif k == 0x05; delete!(store_block_minres_f64, ws_ptr)
+  elseif k == 0x06; delete!(store_block_minres_cf32, ws_ptr)
+  elseif k == 0x07; delete!(store_block_minres_cf64, ws_ptr)
+  end
+  Cint(0)
+end
+
+function _do_block_create!(solver_int :: Cint, m :: Cint, n :: Cint, p :: Cint,
+                           dtype_int :: Cint, wopts :: KrylovWorkspaceOptionsC,
+                           ws_out :: Ptr{Ptr{Cvoid}})
+  mem = wopts.memory == 0 ? 5 : Int(wopts.memory)
+  if solver_int == Cint(0) && dtype_int == Cint(0)
+    ws = Krylov.BlockGmresWorkspace(Int(m), Int(n), Int(p), Vector{Float32}, Matrix{Float32}; memory = mem)
+    r  = Base.pointer_from_objref(ws)
+    store_block_gmres_f32[r] = ws; block_ws_key_store[r] = 0x00
+    unsafe_store!(ws_out, r)
+  elseif solver_int == Cint(0) && dtype_int == Cint(1)
+    ws = Krylov.BlockGmresWorkspace(Int(m), Int(n), Int(p), Vector{Float64}, Matrix{Float64}; memory = mem)
+    r  = Base.pointer_from_objref(ws)
+    store_block_gmres_f64[r] = ws; block_ws_key_store[r] = 0x01
+    unsafe_store!(ws_out, r)
+  elseif solver_int == Cint(0) && dtype_int == Cint(2)
+    ws = Krylov.BlockGmresWorkspace(Int(m), Int(n), Int(p), Vector{ComplexF32}, Matrix{ComplexF32}; memory = mem)
+    r  = Base.pointer_from_objref(ws)
+    store_block_gmres_cf32[r] = ws; block_ws_key_store[r] = 0x02
+    unsafe_store!(ws_out, r)
+  elseif solver_int == Cint(0) && dtype_int == Cint(3)
+    ws = Krylov.BlockGmresWorkspace(Int(m), Int(n), Int(p), Vector{ComplexF64}, Matrix{ComplexF64}; memory = mem)
+    r  = Base.pointer_from_objref(ws)
+    store_block_gmres_cf64[r] = ws; block_ws_key_store[r] = 0x03
+    unsafe_store!(ws_out, r)
+  elseif solver_int == Cint(1) && dtype_int == Cint(0)
+    ws = Krylov.BlockMinresWorkspace(Int(m), Int(n), Int(p), Vector{Float32}, Matrix{Float32})
+    r  = Base.pointer_from_objref(ws)
+    store_block_minres_f32[r] = ws; block_ws_key_store[r] = 0x04
+    unsafe_store!(ws_out, r)
+  elseif solver_int == Cint(1) && dtype_int == Cint(1)
+    ws = Krylov.BlockMinresWorkspace(Int(m), Int(n), Int(p), Vector{Float64}, Matrix{Float64})
+    r  = Base.pointer_from_objref(ws)
+    store_block_minres_f64[r] = ws; block_ws_key_store[r] = 0x05
+    unsafe_store!(ws_out, r)
+  elseif solver_int == Cint(1) && dtype_int == Cint(2)
+    ws = Krylov.BlockMinresWorkspace(Int(m), Int(n), Int(p), Vector{ComplexF32}, Matrix{ComplexF32})
+    r  = Base.pointer_from_objref(ws)
+    store_block_minres_cf32[r] = ws; block_ws_key_store[r] = 0x06
+    unsafe_store!(ws_out, r)
+  elseif solver_int == Cint(1) && dtype_int == Cint(3)
+    ws = Krylov.BlockMinresWorkspace(Int(m), Int(n), Int(p), Vector{ComplexF64}, Matrix{ComplexF64})
+    r  = Base.pointer_from_objref(ws)
+    store_block_minres_cf64[r] = ws; block_ws_key_store[r] = 0x07
+    unsafe_store!(ws_out, r)
+  else
+    return Cint(-2)  # unknown (block solver, dtype) combination
   end
   Cint(0)
 end

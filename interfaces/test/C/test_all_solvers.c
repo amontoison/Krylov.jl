@@ -7,9 +7,10 @@
  *   LS:     A = tridiag(-1, n, -1) with m > n,  b = A * ones
  *           (same matrix, rectangular variant for least-squares solvers)
  *
- * Compile (after building libkrylov with CMake):
- *   gcc -O2 -o test_all_solvers test_all_solvers.c \
- *       -I../include -L../build/lib -lkrylov -Wl,-rpath,../build/lib -lm
+ * Compile (after building libkrylov with juliac — see interfaces/README.md):
+ *   gcc -O2 -o test_all_solvers interfaces/test/C/test_all_solvers.c \
+ *       -I interfaces/build/include interfaces/build/lib/libkrylov.so \
+ *       -Wl,-rpath,'$ORIGIN/../lib/julia' -lm
  *
  * Exit code: 0 if all tests pass, 1 otherwise.
  */
@@ -192,12 +193,17 @@ static int run_test(const SolverInfo *info,
     }
 
     void *ws = NULL;
+    KrylovWorkspaceOptions wopts = krylov_default_workspace_options();
     int ret = krylov_workspace_create(info->solver, m, n,
-                                      KRYLOV_FLOAT64, KRYLOV_CPU, &ws);
+                                      KRYLOV_FLOAT64, KRYLOV_CPU, &wopts, &ws);
     if (ret != 0) {
         printf("  FAIL  krylov_workspace_create returned %d\n", ret);
         return 0;
     }
+
+    KrylovOptions opts = krylov_default_options();
+    opts.atol = 1e-8;
+    opts.rtol = 1e-8;
 
     ret = krylov_solve(ws,
                        cb_A,
@@ -206,7 +212,7 @@ static int run_test(const SolverInfo *info,
                        b,
                        info->need_c ? c : NULL,
                        data,
-                       1e-8, 1e-8, 0, 0);
+                       &opts);
     if (ret != 0) {
         printf("  FAIL  krylov_solve returned %d\n", ret);
         krylov_workspace_free(ws);
