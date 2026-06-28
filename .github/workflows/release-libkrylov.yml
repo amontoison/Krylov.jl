@@ -1,14 +1,21 @@
 name: Release libkrylov binaries
 
-# Triggered by TagBot when it publishes a release.
+# Triggered by the version tag that TagBot pushes for each new release.
 # Builds a self-contained libkrylov bundle (library + Julia runtime) for all
-# supported platforms and uploads the archives to the existing GitHub Release.
+# supported platforms and uploads the archives to the matching GitHub Release.
+#
+# We trigger on the tag push rather than on `release: published` because TagBot
+# publishes the GitHub Release with the default GITHUB_TOKEN, and GitHub does not
+# start new workflow runs from events emitted by GITHUB_TOKEN (anti-recursion).
+# TagBot pushes the tag through the SSH DOCUMENTER_KEY instead, and deploy-key
+# pushes DO trigger workflows (this is how Documentation.yml runs on release).
 #
 # workflow_dispatch lets you re-run or test against any existing tag.
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
 
   workflow_dispatch:
     inputs:
@@ -204,5 +211,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=${{ github.event.release.tag_name || inputs.tag }}
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+
+          # By the time we reach this step the multi-minute build is done, so
+          # the GitHub Release that TagBot creates right after the tag push is
+          # already there. This short retry only guards the rare case where the
+          # release lags slightly behind the tag.
+          for _ in $(seq 1 6); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Release $TAG not available yet, waiting 10s..."
+            sleep 10
+          done
+
           gh release upload "$TAG" "${{ matrix.archive }}" --clobber
