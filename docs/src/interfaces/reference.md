@@ -130,7 +130,7 @@ Always initialise a struct from its `krylov_default_*` helper, then override onl
 - `lambda`, a shift or regularisation; `0.0` means none. For the least-squares and least-norm solvers (LSQR, LSMR, CGLS, CRLS, LNLQ, LSLQ, CRAIG, CRAIGMR) it is the Tikhonov parameter. For the symmetric solvers (MINRES, MINRES-QLP, SYMMLQ, MINARES) it shifts the system to `(A + lambda·I) x = b`.
 - `radius`, a trust-region constraint `‖x‖ ≤ radius` for CG, CR, CGLS, CRLS, LSQR and LSMR. `0.0` (default) means unconstrained; with `radius > 0` the step stops on the trust-region boundary. Useful inside optimization solvers.
 - `linesearch`, set to `1` to detect nonpositive curvature and stop on it (CG, CR, MINRES, MINRES-QLP). Cannot be combined with `radius > 0`.
-- `restart`, set to `1` to restart GMRES, FGMRES, FOM (and `block_gmres`) every `memory` iterations, i.e. the restarted GMRES(k) variant, with `k = memory` from `KrylovWorkspaceOptions`.
+- `restart`, set to `1` to restart GMRES, FGMRES, FOM, GPMR (and `block_gmres`) every `memory` iterations, i.e. the restarted GMRES(k) variant, with `k = memory` from `KrylovWorkspaceOptions`.
 - `reorthogonalization`, set to `1` to reorthogonalize the Krylov basis (GMRES, FGMRES, FOM, DIOM, DQGMRES, GPMR, `block_gmres`), trading work for numerical robustness.
 - `tau`, `nu`, the diagonal scalings of the saddle-point system solved by TriCG and TriMR. `NaN` falls back to `1.0` and `-1.0` respectively.
 

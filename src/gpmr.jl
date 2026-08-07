@@ -15,7 +15,7 @@ export gpmr, gpmr!
     (x, y, stats) = gpmr(A, B, b::AbstractVector{FC}, c::AbstractVector{FC};
                          memory::Int=20, C=I, D=I, E=I, F=I,
                          ldiv::Bool=false, gsp::Bool=false,
-                         λ::FC=one(FC), μ::FC=one(FC),
+                         λ::FC=one(FC), μ::FC=one(FC), restart::Bool=false,
                          reorthogonalization::Bool=false, atol::T=√eps(T),
                          rtol::T=√eps(T), itmax::Int=0,
                          timemax::Float64=Inf, verbose::Int=0, history::Bool=false,
@@ -86,6 +86,7 @@ For an in-place variant that reuses memory across solves, see [`gpmr!`](@ref).
 * `ldiv`: define whether the preconditioners use `ldiv!` or `mul!`;
 * `gsp`: if `true`, set `λ = 1` and `μ = 0` for generalized saddle-point systems;
 * `λ` and `μ`: diagonal scaling factors of the partitioned linear system;
+* `restart`: restart the method after `memory` iterations;
 * `reorthogonalization`: reorthogonalize the new vectors of the Krylov basis against all previous vectors;
 * `atol`: absolute stopping tolerance based on the residual norm;
 * `rtol`: relative stopping tolerance based on the residual norm;
@@ -140,6 +141,7 @@ def_kwargs_gpmr = (:(; C = I                            ),
                    :(; gsp::Bool = false                ),
                    :(; λ::FC = one(FC)                  ),
                    :(; μ::FC = one(FC)                  ),
+                   :(; restart::Bool = false            ),
                    :(; reorthogonalization::Bool = false),
                    :(; atol::T = √eps(T)                ),
                    :(; rtol::T = √eps(T)                ),
@@ -157,7 +159,7 @@ def_kwargs_workspace_gpmr = extract_parameters.(def_kwargs_workspace_gpmr)
 
 args_gpmr = (:A, :B, :b, :c)
 optargs_gpmr = (:x0, :y0)
-kwargs_gpmr = (:C, :D, :E, :F, :ldiv, :gsp, :λ, :μ, :reorthogonalization, :atol, :rtol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
+kwargs_gpmr = (:C, :D, :E, :F, :ldiv, :gsp, :λ, :μ, :restart, :reorthogonalization, :atol, :rtol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
 kwargs_workspace_gpmr = (:memory,)
 
 @eval begin
@@ -196,10 +198,14 @@ kwargs_workspace_gpmr = (:memory,)
     warm_start && (μ ≠ 0) && !FisI && error("Warm-start with right preconditioners is not supported.")
 
     # Set up workspace.
-    allocate_if(!CisI, workspace, :q , Sm, workspace.x)  # The length of q is m
-    allocate_if(!DisI, workspace, :p , Sn, workspace.y)  # The length of p is n
-    allocate_if(!EisI, workspace, :wB, Sm, workspace.x)  # The length of wB is m
-    allocate_if(!FisI, workspace, :wA, Sn, workspace.y)  # The length of wA is n
+    allocate_if(!CisI  , workspace, :q , Sm, workspace.x)  # The length of q is m
+    allocate_if(!DisI  , workspace, :p , Sn, workspace.y)  # The length of p is n
+    allocate_if(!EisI  , workspace, :wB, Sm, workspace.x)  # The length of wB is m
+    allocate_if(!FisI  , workspace, :wA, Sn, workspace.y)  # The length of wA is n
+    allocate_if(restart, workspace, :Δx, Sm, workspace.x)  # The length of Δx is m
+    allocate_if(restart, workspace, :Δy, Sn, workspace.y)  # The length of Δy is n
+    allocate_if(restart, workspace, :br, Sm, workspace.x)  # The length of br is m
+    allocate_if(restart, workspace, :cr, Sn, workspace.y)  # The length of cr is n
     wA, wB, dA, dB, Δx, Δy = workspace.wA, workspace.wB, workspace.dA, workspace.dB, workspace.Δx, workspace.Δy
     x, y, V, U, gs, gc = workspace.x, workspace.y, workspace.V, workspace.U, workspace.gs, workspace.gc
     zt, R, stats = workspace.zt, workspace.R, workspace.stats
@@ -209,22 +215,21 @@ kwargs_workspace_gpmr = (:memory,)
     c₀ = warm_start ? dB : c
     q  = CisI ? dA : workspace.q
     p  = DisI ? dB : workspace.p
+    xr = restart ? Δx : x
+    yr = restart ? Δy : y
 
     # Initial solutions x₀ and y₀.
     kfill!(x, zero(FC))
     kfill!(y, zero(FC))
 
-    iter = 0
-    itmax == 0 && (itmax = m+n)
-
-    # Initialize workspace.
-    nr = 0           # Number of coefficients stored in Rₖ
     mem = length(V)  # Memory
-    ωₖ = zero(FC)    # Auxiliary variable to store fₖₖ
-    kfill!(gs, zero(FC))  # Givens sines used for the factorization QₖRₖ = Sₖ₊₁.ₖ.
-    kfill!(gc, zero(T))   # Givens cosines used for the factorization QₖRₖ = Sₖ₊₁.ₖ.
-    kfill!(R , zero(FC))  # Upper triangular matrix Rₖ.
-    kfill!(zt, zero(FC))  # Rₖzₖ = tₖ with (tₖ, τbar₂ₖ₊₁, τbar₂ₖ₊₂) = (Qₖ)ᴴ(βe₁ + γe₂).
+    npass = 0        # Number of pass
+
+    iter = 0        # Cumulative number of iterations
+    inner_iter = 0  # Number of iterations in a pass
+
+    itmax == 0 && (itmax = m+n)
+    inner_itmax = itmax
 
     # Warm-start
     # If λ ≠ 0, Cb₀ = Cb - CAΔy - λΔx because CM = Iₘ and E = Iₘ
@@ -245,291 +250,370 @@ kwargs_workspace_gpmr = (:memory,)
     !DisI && (c₀ = p)
     warm_start && (μ ≠ 0) && kaxpy!(n, -μ, Δy, c₀)
 
-    # Initialize the orthogonal Hessenberg reduction process.
-    # βv₁ = Cb
-    β = knorm(m, b₀)
-    if β ≠ 0
-      kdivcopy!(m, V[1], b₀, β)
+    # br and cr store the current residuals (b₀, c₀) of the partitioned system.
+    # When restart is true, they are updated in-place at the beginning of each pass.
+    if restart
+      br, cr = workspace.br, workspace.cr
+      kcopy!(m, br, b₀)  # br ← b₀
+      kcopy!(n, cr, c₀)  # cr ← c₀
     else
-      # β = ‖b₀‖₂ = 0
-      kfill!(V[1], zero(FC))  # v₁ = 0 such that v₁ ⊥ Span{v₁, ..., vₖ}
+      br = b₀
+      cr = c₀
     end
 
-    # γu₁ = Dc
-    γ = knorm(n, c₀)
-    if γ ≠ 0
-      kdivcopy!(n, U[1], c₀, γ)
-    else
-      # γ = ‖c₀‖₂ = 0
-      kfill!(U[1], zero(FC))  # u₁ = 0 such that u₁ ⊥ Span{u₁, ..., uₖ}
-    end
+    # Fold the warm-start correction into (x, y) so that (xr, yr) = (Δx, Δy) can
+    # be reused as the per-pass correction accumulators when restart is true.
+    warm_start && restart && kaxpy!(m, one(FC), Δx, x)
+    warm_start && restart && kaxpy!(n, one(FC), Δy, y)
 
     # Compute ‖r₀‖² = γ² + β²
+    β = knorm(m, br)
+    γ = knorm(n, cr)
     rNorm = sqrt(γ^2 + β^2)
     history && push!(rNorms, rNorm)
     ε = atol + rtol * rNorm
 
-    # Initialize t̄₀
-    zt[1] = β
-    zt[2] = γ
-
-    (verbose > 0) && @printf(iostream, "%5s  %7s  %7s  %7s  %5s\n", "k", "‖rₖ‖", "hₖ₊₁.ₖ", "fₖ₊₁.ₖ", "timer")
-    kdisplay(iter, verbose) && @printf(iostream, "%5d  %7.1e  %7s  %7s  %.2fs\n", iter, rNorm, "✗ ✗ ✗ ✗", "✗ ✗ ✗ ✗", start_time |> ktimer)
+    (verbose > 0) && @printf(iostream, "%5s  %5s  %7s  %7s  %7s  %5s\n", "pass", "k", "‖rₖ‖", "hₖ₊₁.ₖ", "fₖ₊₁.ₖ", "timer")
+    kdisplay(iter, verbose) && @printf(iostream, "%5d  %5d  %7.1e  %7s  %7s  %.2fs\n", npass, iter, rNorm, "✗ ✗ ✗ ✗", "✗ ✗ ✗ ✗", start_time |> ktimer)
 
     # Tolerance for breakdown detection.
     btol = eps(T)^(3/4)
 
+    # Tolerance for singular systems.
+    inconsistent = false
+
     # Stopping criterion.
     breakdown = false
-    inconsistent = false
     solved = rNorm ≤ ε
     tired = iter ≥ itmax
+    inner_tired = inner_iter ≥ inner_itmax
     status = "unknown"
     user_requested_exit = false
     overtimed = false
 
     while !(solved || tired || breakdown || user_requested_exit || overtimed)
 
-      # Update iteration index.
-      iter = iter + 1
-      k = iter
-      nr₂ₖ₋₁ = nr       # Position of the column 2k-1 in Rₖ.
-      nr₂ₖ = nr + 2k-1  # Position of the column 2k in Rₖ.
+      # Initialize workspace.
+      nr = 0         # Number of coefficients stored in Rₖ
+      ωₖ = zero(FC)  # Auxiliary variable to store fₖₖ
+      kfill!(gs, zero(FC))  # Givens sines used for the factorization QₖRₖ = Sₖ₊₁.ₖ.
+      kfill!(gc, zero(T))   # Givens cosines used for the factorization QₖRₖ = Sₖ₊₁.ₖ.
+      kfill!(R , zero(FC))  # Upper triangular matrix Rₖ.
+      kfill!(zt, zero(FC))  # Rₖzₖ = tₖ with (tₖ, τbar₂ₖ₊₁, τbar₂ₖ₊₂) = (Qₖ)ᴴ(βe₁ + γe₂).
 
-      # Update workspace if more storage is required
-      if iter > mem
-        start_allocation_time = time_ns()
-        for i = 1 : 4k-1
-          push!(R, zero(FC))
+      if restart
+        # Update the residuals (br, cr) with the correction (xr, yr) of the previous pass.
+        # In the preconditioned coordinates (xr, yr) = (E⁻¹x, F⁻¹y), the residuals satisfy
+        # br = Cb - λ xr - C A F yr and cr = Dc - μ yr - D B E xr.
+        if npass ≥ 1
+          # br ← br - λ xr - C A (F yr)
+          (λ ≠ 0) && kaxpy!(m, -λ, xr, br)
+          ytmp = FisI ? yr : wA
+          FisI || mulorldiv!(ytmp, F, yr, ldiv)  # ytmp = F yr
+          kmul!(dA, A, ytmp)                     # dA = A F yr
+          CisI || mulorldiv!(q, C, dA, ldiv)     # q  = C A F yr
+          kaxpy!(m, -one(FC), q, br)
+
+          # cr ← cr - μ yr - D B (E xr)
+          (μ ≠ 0) && kaxpy!(n, -μ, yr, cr)
+          xtmp = EisI ? xr : wB
+          EisI || mulorldiv!(xtmp, E, xr, ldiv)  # xtmp = E xr
+          kmul!(dB, B, xtmp)                     # dB = B E xr
+          DisI || mulorldiv!(p, D, dB, ldiv)     # p  = D B E xr
+          kaxpy!(n, -one(FC), p, cr)
+
+          # Update the solution (x, y) += (E xr, F yr) with the correction of the previous pass.
+          kaxpy!(m, one(FC), xtmp, x)
+          kaxpy!(n, one(FC), ytmp, y)
+
+          # Recompute the norms of the new residuals.
+          β = knorm(m, br)
+          γ = knorm(n, cr)
         end
-        for i = 1 : 4
-          push!(gs, zero(FC))
-          push!(gc, zero(T))
-        end
-        stats.allocation_timer += start_allocation_time |> ktimer
+        kfill!(xr, zero(FC))  # xr === Δx when restart is set to true
+        kfill!(yr, zero(FC))  # yr === Δy when restart is set to true
       end
 
-      # Continue the orthogonal Hessenberg reduction process.
-      # CAFUₖ = VₖHₖ + hₖ₊₁.ₖ * vₖ₊₁(eₖ)ᵀ = Vₖ₊₁Hₖ₊₁.ₖ
-      # DBEVₖ = UₖFₖ + fₖ₊₁.ₖ * uₖ₊₁(eₖ)ᵀ = Uₖ₊₁Fₖ₊₁.ₖ
-      wA = FisI ? U[iter] : workspace.wA
-      wB = EisI ? V[iter] : workspace.wB
-      FisI || mulorldiv!(wA, F, U[iter], ldiv)  # wA = Fuₖ
-      EisI || mulorldiv!(wB, E, V[iter], ldiv)  # wB = Evₖ
-      kmul!(dA, A, wA)                          # dA = AFuₖ
-      kmul!(dB, B, wB)                          # dB = BEvₖ
-      CisI || mulorldiv!(q, C, dA, ldiv)        # q  = CAFuₖ
-      DisI || mulorldiv!(p, D, dB, ldiv)        # p  = DBEvₖ
-
-      for i = 1 : iter
-        hᵢₖ = kdot(m, V[i], q)    # hᵢ.ₖ = (vᵢ)ᴴq
-        fᵢₖ = kdot(n, U[i], p)    # fᵢ.ₖ = (uᵢ)ᴴp
-        kaxpy!(m, -hᵢₖ, V[i], q)  # q ← q - hᵢ.ₖvᵢ
-        kaxpy!(n, -fᵢₖ, U[i], p)  # p ← p - fᵢ.ₖuᵢ
-        R[nr₂ₖ + 2i-1] = hᵢₖ
-        (i < iter) ? R[nr₂ₖ₋₁ + 2i] = fᵢₖ : ωₖ = fᵢₖ
+      # Initialize the orthogonal Hessenberg reduction process.
+      # βv₁ = br
+      if β ≠ 0
+        kdivcopy!(m, V[1], br, β)  # v₁ = br / β
+      else
+        # β = ‖br‖₂ = 0
+        kfill!(V[1], zero(FC))  # v₁ = 0 such that v₁ ⊥ Span{v₁, ..., vₖ}
       end
 
-      # Reorthogonalization of the Krylov basis.
-      if reorthogonalization
-        for i = 1 : iter
-          Htmp = kdot(m, V[i], q)    # hₜₘₚ = (vᵢ)ᴴq
-          Ftmp = kdot(n, U[i], p)    # fₜₘₚ = (uᵢ)ᴴp
-          kaxpy!(m, -Htmp, V[i], q)  # q ← q - hₜₘₚvᵢ
-          kaxpy!(n, -Ftmp, U[i], p)  # p ← p - fₜₘₚuᵢ
-          R[nr₂ₖ + 2i-1] += Htmp                            # hᵢ.ₖ = hᵢ.ₖ + hₜₘₚ
-          (i < iter) ? R[nr₂ₖ₋₁ + 2i] += Ftmp : ωₖ += Ftmp  # fᵢ.ₖ = fᵢ.ₖ + fₜₘₚ
-        end
+      # γu₁ = cr
+      if γ ≠ 0
+        kdivcopy!(n, U[1], cr, γ)  # u₁ = cr / γ
+      else
+        # γ = ‖cr‖₂ = 0
+        kfill!(U[1], zero(FC))  # u₁ = 0 such that u₁ ⊥ Span{u₁, ..., uₖ}
       end
 
-      Haux = knorm(m, q)   # hₖ₊₁.ₖ = ‖q‖₂
-      Faux = knorm(n, p)   # fₖ₊₁.ₖ = ‖p‖₂
+      # Initialize t̄₀
+      zt[1] = β
+      zt[2] = γ
 
-      # Add regularization terms.
-      R[nr₂ₖ₋₁ + 2k-1] = λ  # S₂ₖ₋₁.₂ₖ₋₁ = λ
-      R[nr₂ₖ + 2k]     = μ  # S₂ₖ.₂ₖ = μ
+      npass = npass + 1
+      inner_iter = 0
+      inner_tired = false
 
-      # Notations : Wₖ = [w₁ ••• wₖ] = [v₁ 0  ••• vₖ 0 ]
-      #                                [0  u₁ ••• 0  uₖ]
-      #
-      # rₖ = [ b ] - [ λI   A ] [ xₖ ] = [ b ] - [ λI   A ] Wₖzₖ
-      #      [ c ]   [  B  μI ] [ yₖ ]   [ c ]   [  B  μI ]
-      #
-      # block-Arnoldi formulation : [ λI   A ] Wₖ = Wₖ₊₁Sₖ₊₁.ₖ
-      #                             [  B  μI ]
-      #
-      # GPMR subproblem : min ‖ rₖ ‖ ↔ min ‖ Sₖ₊₁.ₖzₖ - βe₁ - γe₂ ‖
-      #
-      # Update the QR factorization of Sₖ₊₁.ₖ = Qₖ [ Rₖ ].
-      #                                            [ Oᵀ ]
-      #
-      # Apply previous givens reflections when k ≥ 2
-      # [ 1                ][ 1                ][ c₂.ᵢ  s₂.ᵢ       ][ c₁.ᵢ        s₁.ᵢ ] [ r̄₂ᵢ₋₁.₂ₖ₋₁  r̄₂ᵢ₋₁.₂ₖ ]   [ r₂ᵢ₋₁.₂ₖ₋₁  r₂ᵢ₋₁.₂ₖ ]
-      # [    c₄.ᵢ  s₄.ᵢ    ][    c₃.ᵢ     s₃.ᵢ ][ s̄₂.ᵢ -c₂.ᵢ       ][       1          ] [ r̄₂ᵢ.₂ₖ₋₁    r̄₂ᵢ.₂ₖ   ] = [ r₂ᵢ.₂ₖ₋₁    r₂ᵢ.₂ₖ   ]
-      # [    s̄₄.ᵢ -c₄.ᵢ    ][          1       ][             1    ][          1       ] [ ρ           hᵢ₊₁.ₖ   ]   [ r̄₂ᵢ₊₁.₂ₖ₋₁  r̄₂ᵢ₊₁.₂ₖ ]
-      # [                1 ][    s̄₃.ᵢ    -c₃.ᵢ ][                1 ][ s̄₁.ᵢ       -c₁.ᵢ ] [ fᵢ₊₁.ₖ      δ        ]   [ r̄₂ᵢ₊₂.₂ₖ₋₁  r̄₂ᵢ₊₂.₂ₖ ]
-      #
-      # r̄₁.₂ₖ₋₁ = 0, r̄₁.₂ₖ = h₁.ₖ, r̄₂.₂ₖ₋₁ = f₁.ₖ and r̄₂.₂ₖ = 0.
-      # (ρ, δ) = (λ, μ) if i == k-1, (ρ, δ) = (0, 0) otherwise.
-      for i = 1 : iter-1
-        for nrcol ∈ (nr₂ₖ₋₁, nr₂ₖ)
-          flag = (i == iter-1 && nrcol == nr₂ₖ₋₁)
-          αₖ = flag ? ωₖ : R[nrcol + 2i+2]
+      while !(solved || inner_tired || breakdown || user_requested_exit || overtimed)
 
-          c₁ᵢ = gc[4i-3]
-          s₁ᵢ = gs[4i-3]
-          rtmp            =      c₁ᵢ  * R[nrcol + 2i-1] + s₁ᵢ * αₖ
-          αₖ              = conj(s₁ᵢ) * R[nrcol + 2i-1] - c₁ᵢ * αₖ
-          R[nrcol + 2i-1] = rtmp
+        # Update iteration index.
+        inner_iter = inner_iter + 1
+        k = inner_iter
+        nr₂ₖ₋₁ = nr       # Position of the column 2k-1 in Rₖ.
+        nr₂ₖ = nr + 2k-1  # Position of the column 2k in Rₖ.
 
-          c₂ᵢ = gc[4i-2]
-          s₂ᵢ = gs[4i-2]
-          rtmp            =      c₂ᵢ  * R[nrcol + 2i-1] + s₂ᵢ * R[nrcol + 2i]
-          R[nrcol + 2i]   = conj(s₂ᵢ) * R[nrcol + 2i-1] - c₂ᵢ * R[nrcol + 2i]
-          R[nrcol + 2i-1] = rtmp
-
-          c₃ᵢ = gc[4i-1]
-          s₃ᵢ = gs[4i-1]
-          rtmp          =      c₃ᵢ  * R[nrcol + 2i] + s₃ᵢ * αₖ
-          αₖ            = conj(s₃ᵢ) * R[nrcol + 2i] - c₃ᵢ * αₖ
-          R[nrcol + 2i] = rtmp
-
-          c₄ᵢ = gc[4i]
-          s₄ᵢ = gs[4i]
-          rtmp            =      c₄ᵢ  * R[nrcol + 2i] + s₄ᵢ * R[nrcol + 2i+1]
-          R[nrcol + 2i+1] = conj(s₄ᵢ) * R[nrcol + 2i] - c₄ᵢ * R[nrcol + 2i+1]
-          R[nrcol + 2i]   = rtmp
-
-          flag ? ωₖ = αₖ : R[nrcol + 2i+2] = αₖ
-        end
-      end
-
-      # Compute and apply current givens reflections
-      # [ 1                ][ 1                ][ c₂.ₖ  s₂.ₖ       ][ c₁.ₖ        s₁.ₖ ] [ r̄₂ₖ₋₁.₂ₖ₋₁  r̄₂ₖ₋₁.₂ₖ ]    [ r₂ₖ₋₁.₂ₖ₋₁  r₂ₖ₋₁.₂ₖ ]
-      # [    c₄.ₖ  s₄.ₖ    ][    c₃.ₖ     s₃.ₖ ][ s̄₂.ₖ -c₂.ₖ       ][       1          ] [ r̄₂ₖ.₂ₖ₋₁    r̄₂ₖ.₂ₖ   ] =  [             r₂ₖ.₂ₖ   ]
-      # [    s̄₄.ₖ -c₄.ₖ    ][          1       ][             1    ][          1       ] [             hₖ₊₁.ₖ   ]    [                      ]
-      # [                1 ][    s̄₃.ₖ    -c₃.ₖ ][                1 ][ s̄₁.ₖ       -c₁.ₖ ] [ fₖ₊₁.ₖ               ]    [                      ]
-      (c₁ₖ, s₁ₖ, R[nr₂ₖ₋₁ + 2k-1]) = sym_givens(R[nr₂ₖ₋₁ + 2k-1], Faux)  # annihilate fₖ₊₁.ₖ
-      θₖ             = conj(s₁ₖ) * R[nr₂ₖ + 2k-1]
-      R[nr₂ₖ + 2k-1] =      c₁ₖ  * R[nr₂ₖ + 2k-1]
-
-      (c₂ₖ, s₂ₖ, R[nr₂ₖ₋₁ + 2k-1]) = sym_givens(R[nr₂ₖ₋₁ + 2k-1], ωₖ)  # annihilate ωₖ = r̄₂ₖ.₂ₖ₋₁
-      rtmp           =      c₂ₖ  * R[nr₂ₖ + 2k-1] + s₂ₖ * R[nr₂ₖ + 2k]
-      R[nr₂ₖ + 2k]   = conj(s₂ₖ) * R[nr₂ₖ + 2k-1] - c₂ₖ * R[nr₂ₖ + 2k]
-      R[nr₂ₖ + 2k-1] = rtmp
-
-      (c₃ₖ, s₃ₖ, R[nr₂ₖ + 2k]) = sym_givens(R[nr₂ₖ + 2k], θₖ)  # annihilate Θₖ = r̄₂ₖ₊₂.₂ₖ
-
-      (c₄ₖ, s₄ₖ, R[nr₂ₖ + 2k]) = sym_givens(R[nr₂ₖ + 2k], Haux)  # annihilate hₖ₊₁.ₖ
-
-      # Update t̄ₖ = (τ₁, ..., τ₂ₖ, τbar₂ₖ₊₁, τbar₂ₖ₊₂).
-      #
-      # [ 1                ][ 1                ][ c₂.ₖ  s₂.ₖ       ][ c₁.ₖ        s₁.ₖ ] [ τbar₂ₖ₋₁ ]   [ τ₂ₖ₋₁    ]
-      # [    c₄.ₖ  s₄.ₖ    ][    c₃.ₖ     s₃.ₖ ][ s̄₂.ₖ -c₂.ₖ       ][       1          ] [ τbar₂ₖ   ] = [ τ₂ₖ      ]
-      # [    s̄₄.ₖ -c₄.ₖ    ][          1       ][             1    ][          1       ] [          ]   [ τbar₂ₖ₊₁ ]
-      # [                1 ][    s̄₃.ₖ    -c₃.ₖ ][                1 ][ s̄₁.ₖ       -c₁.ₖ ] [          ]   [ τbar₂ₖ₊₂ ]
-      τbar₂ₖ₊₂ = conj(s₁ₖ) * zt[2k-1]
-      zt[2k-1] =      c₁ₖ  * zt[2k-1]
-
-      τtmp     =      c₂ₖ  * zt[2k-1] + s₂ₖ * zt[2k]
-      zt[2k]   = conj(s₂ₖ) * zt[2k-1] - c₂ₖ * zt[2k]
-      zt[2k-1] = τtmp
-
-      τtmp     =      c₃ₖ  * zt[2k] + s₃ₖ * τbar₂ₖ₊₂
-      τbar₂ₖ₊₂ = conj(s₃ₖ) * zt[2k] - c₃ₖ * τbar₂ₖ₊₂
-      zt[2k]   = τtmp
-
-      τbar₂ₖ₊₁ = conj(s₄ₖ) * zt[2k]
-      zt[2k]   =      c₄ₖ  * zt[2k]
-
-      # Update gc and gs vectors
-      gc[4k-3], gc[4k-2], gc[4k-1], gc[4k] = c₁ₖ, c₂ₖ, c₃ₖ, c₄ₖ
-      gs[4k-3], gs[4k-2], gs[4k-1], gs[4k] = s₁ₖ, s₂ₖ, s₃ₖ, s₄ₖ
-
-      # Compute ‖rₖ‖² = |τbar₂ₖ₊₁|² + |τbar₂ₖ₊₂|²
-      rNorm = sqrt(abs2(τbar₂ₖ₊₁) + abs2(τbar₂ₖ₊₂))
-      history && push!(rNorms, rNorm)
-
-      # Update the number of coefficients in Rₖ.
-      nr = nr + 4k-1
-
-      # Stopping conditions that do not depend on user input.
-      # This is to guard against tolerances that are unreasonably small.
-      resid_decrease_mach = (rNorm + one(T) ≤ one(T))
-
-      # Update stopping criterion.
-      user_requested_exit = callback(workspace) :: Bool
-      resid_decrease_lim = rNorm ≤ ε
-      breakdown = Faux ≤ btol && Haux ≤ btol
-      solved = resid_decrease_lim || resid_decrease_mach
-      tired = iter ≥ itmax
-      timer = time_ns() - start_time
-      overtimed = timer > timemax_ns
-      kdisplay(iter, verbose) && @printf(iostream, "%5d  %7.1e  %7.1e  %7.1e  %.2fs\n", iter, rNorm, Haux, Faux, start_time |> ktimer)
-
-      # Compute vₖ₊₁ and uₖ₊₁
-      if !(solved || tired || breakdown || user_requested_exit || overtimed)
-        if iter ≥ mem
+        # Update workspace if more storage is required and restart is set to false
+        if !restart && (inner_iter > mem)
           start_allocation_time = time_ns()
-          push!(V, similar(workspace.x))
-          push!(U, similar(workspace.y))
-          push!(zt, zero(FC), zero(FC))
+          for i = 1 : 4k-1
+            push!(R, zero(FC))
+          end
+          for i = 1 : 4
+            push!(gs, zero(FC))
+            push!(gc, zero(T))
+          end
           stats.allocation_timer += start_allocation_time |> ktimer
         end
 
-        # hₖ₊₁.ₖ ≠ 0
-        if Haux > btol
-          kdivcopy!(m, V[k+1], q, Haux)  # vₖ₊₁ = q / hₖ₊₁.ₖ
-        else
-          # Breakdown -- hₖ₊₁.ₖ = ‖q‖₂ = 0 and Auₖ ∈ Span{v₁, ..., vₖ}
-          kfill!(V[k+1], zero(FC))  # vₖ₊₁ = 0 such that vₖ₊₁ ⊥ Span{v₁, ..., vₖ}
+        # Continue the orthogonal Hessenberg reduction process.
+        # CAFUₖ = VₖHₖ + hₖ₊₁.ₖ * vₖ₊₁(eₖ)ᵀ = Vₖ₊₁Hₖ₊₁.ₖ
+        # DBEVₖ = UₖFₖ + fₖ₊₁.ₖ * uₖ₊₁(eₖ)ᵀ = Uₖ₊₁Fₖ₊₁.ₖ
+        wA = FisI ? U[inner_iter] : workspace.wA
+        wB = EisI ? V[inner_iter] : workspace.wB
+        FisI || mulorldiv!(wA, F, U[inner_iter], ldiv)  # wA = Fuₖ
+        EisI || mulorldiv!(wB, E, V[inner_iter], ldiv)  # wB = Evₖ
+        kmul!(dA, A, wA)                                # dA = AFuₖ
+        kmul!(dB, B, wB)                                # dB = BEvₖ
+        CisI || mulorldiv!(q, C, dA, ldiv)              # q  = CAFuₖ
+        DisI || mulorldiv!(p, D, dB, ldiv)              # p  = DBEvₖ
+
+        for i = 1 : inner_iter
+          hᵢₖ = kdot(m, V[i], q)    # hᵢ.ₖ = (vᵢ)ᴴq
+          fᵢₖ = kdot(n, U[i], p)    # fᵢ.ₖ = (uᵢ)ᴴp
+          kaxpy!(m, -hᵢₖ, V[i], q)  # q ← q - hᵢ.ₖvᵢ
+          kaxpy!(n, -fᵢₖ, U[i], p)  # p ← p - fᵢ.ₖuᵢ
+          R[nr₂ₖ + 2i-1] = hᵢₖ
+          (i < inner_iter) ? R[nr₂ₖ₋₁ + 2i] = fᵢₖ : ωₖ = fᵢₖ
         end
 
-        # fₖ₊₁.ₖ ≠ 0
-        if Faux > btol
-          kdivcopy!(n, U[k+1], p, Faux)  # fₖ₊₁.ₖuₖ₊₁ = p
-        else
-          # Breakdown -- fₖ₊₁.ₖ = ‖p‖₂ = 0 and Bvₖ ∈ Span{u₁, ..., uₖ}
-          kfill!(U[k+1], zero(FC))  # uₖ₊₁ = 0 such that uₖ₊₁ ⊥ Span{u₁, ..., uₖ}
+        # Reorthogonalization of the Krylov basis.
+        if reorthogonalization
+          for i = 1 : inner_iter
+            Htmp = kdot(m, V[i], q)    # hₜₘₚ = (vᵢ)ᴴq
+            Ftmp = kdot(n, U[i], p)    # fₜₘₚ = (uᵢ)ᴴp
+            kaxpy!(m, -Htmp, V[i], q)  # q ← q - hₜₘₚvᵢ
+            kaxpy!(n, -Ftmp, U[i], p)  # p ← p - fₜₘₚuᵢ
+            R[nr₂ₖ + 2i-1] += Htmp                                  # hᵢ.ₖ = hᵢ.ₖ + hₜₘₚ
+            (i < inner_iter) ? R[nr₂ₖ₋₁ + 2i] += Ftmp : ωₖ += Ftmp  # fᵢ.ₖ = fᵢ.ₖ + fₜₘₚ
+          end
         end
 
-        zt[2k+1] = τbar₂ₖ₊₁
-        zt[2k+2] = τbar₂ₖ₊₂
+        Haux = knorm(m, q)   # hₖ₊₁.ₖ = ‖q‖₂
+        Faux = knorm(n, p)   # fₖ₊₁.ₖ = ‖p‖₂
+
+        # Add regularization terms.
+        R[nr₂ₖ₋₁ + 2k-1] = λ  # S₂ₖ₋₁.₂ₖ₋₁ = λ
+        R[nr₂ₖ + 2k]     = μ  # S₂ₖ.₂ₖ = μ
+
+        # Notations : Wₖ = [w₁ ••• wₖ] = [v₁ 0  ••• vₖ 0 ]
+        #                                [0  u₁ ••• 0  uₖ]
+        #
+        # rₖ = [ b ] - [ λI   A ] [ xₖ ] = [ b ] - [ λI   A ] Wₖzₖ
+        #      [ c ]   [  B  μI ] [ yₖ ]   [ c ]   [  B  μI ]
+        #
+        # block-Arnoldi formulation : [ λI   A ] Wₖ = Wₖ₊₁Sₖ₊₁.ₖ
+        #                             [  B  μI ]
+        #
+        # GPMR subproblem : min ‖ rₖ ‖ ↔ min ‖ Sₖ₊₁.ₖzₖ - βe₁ - γe₂ ‖
+        #
+        # Update the QR factorization of Sₖ₊₁.ₖ = Qₖ [ Rₖ ].
+        #                                            [ Oᵀ ]
+        #
+        # Apply previous givens reflections when k ≥ 2
+        # [ 1                ][ 1                ][ c₂.ᵢ  s₂.ᵢ       ][ c₁.ᵢ        s₁.ᵢ ] [ r̄₂ᵢ₋₁.₂ₖ₋₁  r̄₂ᵢ₋₁.₂ₖ ]   [ r₂ᵢ₋₁.₂ₖ₋₁  r₂ᵢ₋₁.₂ₖ ]
+        # [    c₄.ᵢ  s₄.ᵢ    ][    c₃.ᵢ     s₃.ᵢ ][ s̄₂.ᵢ -c₂.ᵢ       ][       1          ] [ r̄₂ᵢ.₂ₖ₋₁    r̄₂ᵢ.₂ₖ   ] = [ r₂ᵢ.₂ₖ₋₁    r₂ᵢ.₂ₖ   ]
+        # [    s̄₄.ᵢ -c₄.ᵢ    ][          1       ][             1    ][          1       ] [ ρ           hᵢ₊₁.ₖ   ]   [ r̄₂ᵢ₊₁.₂ₖ₋₁  r̄₂ᵢ₊₁.₂ₖ ]
+        # [                1 ][    s̄₃.ᵢ    -c₃.ᵢ ][                1 ][ s̄₁.ᵢ       -c₁.ᵢ ] [ fᵢ₊₁.ₖ      δ        ]   [ r̄₂ᵢ₊₂.₂ₖ₋₁  r̄₂ᵢ₊₂.₂ₖ ]
+        #
+        # r̄₁.₂ₖ₋₁ = 0, r̄₁.₂ₖ = h₁.ₖ, r̄₂.₂ₖ₋₁ = f₁.ₖ and r̄₂.₂ₖ = 0.
+        # (ρ, δ) = (λ, μ) if i == k-1, (ρ, δ) = (0, 0) otherwise.
+        for i = 1 : inner_iter-1
+          for nrcol ∈ (nr₂ₖ₋₁, nr₂ₖ)
+            flag = (i == inner_iter-1 && nrcol == nr₂ₖ₋₁)
+            αₖ = flag ? ωₖ : R[nrcol + 2i+2]
+
+            c₁ᵢ = gc[4i-3]
+            s₁ᵢ = gs[4i-3]
+            rtmp            =      c₁ᵢ  * R[nrcol + 2i-1] + s₁ᵢ * αₖ
+            αₖ              = conj(s₁ᵢ) * R[nrcol + 2i-1] - c₁ᵢ * αₖ
+            R[nrcol + 2i-1] = rtmp
+
+            c₂ᵢ = gc[4i-2]
+            s₂ᵢ = gs[4i-2]
+            rtmp            =      c₂ᵢ  * R[nrcol + 2i-1] + s₂ᵢ * R[nrcol + 2i]
+            R[nrcol + 2i]   = conj(s₂ᵢ) * R[nrcol + 2i-1] - c₂ᵢ * R[nrcol + 2i]
+            R[nrcol + 2i-1] = rtmp
+
+            c₃ᵢ = gc[4i-1]
+            s₃ᵢ = gs[4i-1]
+            rtmp          =      c₃ᵢ  * R[nrcol + 2i] + s₃ᵢ * αₖ
+            αₖ            = conj(s₃ᵢ) * R[nrcol + 2i] - c₃ᵢ * αₖ
+            R[nrcol + 2i] = rtmp
+
+            c₄ᵢ = gc[4i]
+            s₄ᵢ = gs[4i]
+            rtmp            =      c₄ᵢ  * R[nrcol + 2i] + s₄ᵢ * R[nrcol + 2i+1]
+            R[nrcol + 2i+1] = conj(s₄ᵢ) * R[nrcol + 2i] - c₄ᵢ * R[nrcol + 2i+1]
+            R[nrcol + 2i]   = rtmp
+
+            flag ? ωₖ = αₖ : R[nrcol + 2i+2] = αₖ
+          end
+        end
+
+        # Compute and apply current givens reflections
+        # [ 1                ][ 1                ][ c₂.ₖ  s₂.ₖ       ][ c₁.ₖ        s₁.ₖ ] [ r̄₂ₖ₋₁.₂ₖ₋₁  r̄₂ₖ₋₁.₂ₖ ]    [ r₂ₖ₋₁.₂ₖ₋₁  r₂ₖ₋₁.₂ₖ ]
+        # [    c₄.ₖ  s₄.ₖ    ][    c₃.ₖ     s₃.ₖ ][ s̄₂.ₖ -c₂.ₖ       ][       1          ] [ r̄₂ₖ.₂ₖ₋₁    r̄₂ₖ.₂ₖ   ] =  [             r₂ₖ.₂ₖ   ]
+        # [    s̄₄.ₖ -c₄.ₖ    ][          1       ][             1    ][          1       ] [             hₖ₊₁.ₖ   ]    [                      ]
+        # [                1 ][    s̄₃.ₖ    -c₃.ₖ ][                1 ][ s̄₁.ₖ       -c₁.ₖ ] [ fₖ₊₁.ₖ               ]    [                      ]
+        (c₁ₖ, s₁ₖ, R[nr₂ₖ₋₁ + 2k-1]) = sym_givens(R[nr₂ₖ₋₁ + 2k-1], Faux)  # annihilate fₖ₊₁.ₖ
+        θₖ             = conj(s₁ₖ) * R[nr₂ₖ + 2k-1]
+        R[nr₂ₖ + 2k-1] =      c₁ₖ  * R[nr₂ₖ + 2k-1]
+
+        (c₂ₖ, s₂ₖ, R[nr₂ₖ₋₁ + 2k-1]) = sym_givens(R[nr₂ₖ₋₁ + 2k-1], ωₖ)  # annihilate ωₖ = r̄₂ₖ.₂ₖ₋₁
+        rtmp           =      c₂ₖ  * R[nr₂ₖ + 2k-1] + s₂ₖ * R[nr₂ₖ + 2k]
+        R[nr₂ₖ + 2k]   = conj(s₂ₖ) * R[nr₂ₖ + 2k-1] - c₂ₖ * R[nr₂ₖ + 2k]
+        R[nr₂ₖ + 2k-1] = rtmp
+
+        (c₃ₖ, s₃ₖ, R[nr₂ₖ + 2k]) = sym_givens(R[nr₂ₖ + 2k], θₖ)  # annihilate Θₖ = r̄₂ₖ₊₂.₂ₖ
+
+        (c₄ₖ, s₄ₖ, R[nr₂ₖ + 2k]) = sym_givens(R[nr₂ₖ + 2k], Haux)  # annihilate hₖ₊₁.ₖ
+
+        # Update t̄ₖ = (τ₁, ..., τ₂ₖ, τbar₂ₖ₊₁, τbar₂ₖ₊₂).
+        #
+        # [ 1                ][ 1                ][ c₂.ₖ  s₂.ₖ       ][ c₁.ₖ        s₁.ₖ ] [ τbar₂ₖ₋₁ ]   [ τ₂ₖ₋₁    ]
+        # [    c₄.ₖ  s₄.ₖ    ][    c₃.ₖ     s₃.ₖ ][ s̄₂.ₖ -c₂.ₖ       ][       1          ] [ τbar₂ₖ   ] = [ τ₂ₖ      ]
+        # [    s̄₄.ₖ -c₄.ₖ    ][          1       ][             1    ][          1       ] [          ]   [ τbar₂ₖ₊₁ ]
+        # [                1 ][    s̄₃.ₖ    -c₃.ₖ ][                1 ][ s̄₁.ₖ       -c₁.ₖ ] [          ]   [ τbar₂ₖ₊₂ ]
+        τbar₂ₖ₊₂ = conj(s₁ₖ) * zt[2k-1]
+        zt[2k-1] =      c₁ₖ  * zt[2k-1]
+
+        τtmp     =      c₂ₖ  * zt[2k-1] + s₂ₖ * zt[2k]
+        zt[2k]   = conj(s₂ₖ) * zt[2k-1] - c₂ₖ * zt[2k]
+        zt[2k-1] = τtmp
+
+        τtmp     =      c₃ₖ  * zt[2k] + s₃ₖ * τbar₂ₖ₊₂
+        τbar₂ₖ₊₂ = conj(s₃ₖ) * zt[2k] - c₃ₖ * τbar₂ₖ₊₂
+        zt[2k]   = τtmp
+
+        τbar₂ₖ₊₁ = conj(s₄ₖ) * zt[2k]
+        zt[2k]   =      c₄ₖ  * zt[2k]
+
+        # Update gc and gs vectors
+        gc[4k-3], gc[4k-2], gc[4k-1], gc[4k] = c₁ₖ, c₂ₖ, c₃ₖ, c₄ₖ
+        gs[4k-3], gs[4k-2], gs[4k-1], gs[4k] = s₁ₖ, s₂ₖ, s₃ₖ, s₄ₖ
+
+        # Compute ‖rₖ‖² = |τbar₂ₖ₊₁|² + |τbar₂ₖ₊₂|²
+        rNorm = sqrt(abs2(τbar₂ₖ₊₁) + abs2(τbar₂ₖ₊₂))
+        history && push!(rNorms, rNorm)
+
+        # Update the number of coefficients in Rₖ.
+        nr = nr + 4k-1
+
+        # Stopping conditions that do not depend on user input.
+        # This is to guard against tolerances that are unreasonably small.
+        resid_decrease_mach = (rNorm + one(T) ≤ one(T))
+
+        # Update stopping criterion.
+        user_requested_exit = callback(workspace) :: Bool
+        resid_decrease_lim = rNorm ≤ ε
+        breakdown = Faux ≤ btol && Haux ≤ btol
+        solved = resid_decrease_lim || resid_decrease_mach
+        inner_tired = restart ? inner_iter ≥ min(mem, inner_itmax) : inner_iter ≥ inner_itmax
+        timer = time_ns() - start_time
+        overtimed = timer > timemax_ns
+        kdisplay(iter+inner_iter, verbose) && @printf(iostream, "%5d  %5d  %7.1e  %7.1e  %7.1e  %.2fs\n", npass, iter+inner_iter, rNorm, Haux, Faux, start_time |> ktimer)
+
+        # Compute vₖ₊₁ and uₖ₊₁
+        if !(solved || inner_tired || breakdown || user_requested_exit || overtimed)
+          if !restart && (inner_iter ≥ mem)
+            start_allocation_time = time_ns()
+            push!(V, similar(workspace.x))
+            push!(U, similar(workspace.y))
+            push!(zt, zero(FC), zero(FC))
+            stats.allocation_timer += start_allocation_time |> ktimer
+          end
+
+          # hₖ₊₁.ₖ ≠ 0
+          if Haux > btol
+            kdivcopy!(m, V[k+1], q, Haux)  # vₖ₊₁ = q / hₖ₊₁.ₖ
+          else
+            # Breakdown -- hₖ₊₁.ₖ = ‖q‖₂ = 0 and Auₖ ∈ Span{v₁, ..., vₖ}
+            kfill!(V[k+1], zero(FC))  # vₖ₊₁ = 0 such that vₖ₊₁ ⊥ Span{v₁, ..., vₖ}
+          end
+
+          # fₖ₊₁.ₖ ≠ 0
+          if Faux > btol
+            kdivcopy!(n, U[k+1], p, Faux)  # fₖ₊₁.ₖuₖ₊₁ = p
+          else
+            # Breakdown -- fₖ₊₁.ₖ = ‖p‖₂ = 0 and Bvₖ ∈ Span{u₁, ..., uₖ}
+            kfill!(U[k+1], zero(FC))  # uₖ₊₁ = 0 such that uₖ₊₁ ⊥ Span{u₁, ..., uₖ}
+          end
+
+          zt[2k+1] = τbar₂ₖ₊₁
+          zt[2k+2] = τbar₂ₖ₊₂
+        end
       end
+
+      # Compute zₖ = (ζ₁, ..., ζ₂ₖ) by solving Rₖzₖ = tₖ with backward substitution.
+      for i = 2*inner_iter : -1 : 1
+        pos = nr + i - 2*inner_iter       # position of rᵢ.ₖ
+        for j = 2*inner_iter : -1 : i+1
+          zt[i] = zt[i] - R[pos] * zt[j]  # ζᵢ ← ζᵢ - rᵢ.ⱼζⱼ
+          pos = pos - j + 1               # position of rᵢ.ⱼ₋₁
+        end
+        # Rₖ can be singular if the system is inconsistent
+        if abs(R[pos]) ≤ btol
+          zt[i] = zero(FC)
+          inconsistent = true
+        else
+          zt[i] = zt[i] / R[pos]          # ζᵢ ← ζᵢ / rᵢ.ᵢ
+        end
+      end
+
+      # Compute the correction (xr, yr) of the current pass.
+      for i = 1 : inner_iter
+        kaxpy!(m, zt[2i-1], V[i], xr)  # xₖ = ζ₁v₁ + ζ₃v₂ + ••• + ζ₂ₖ₋₁vₖ
+        kaxpy!(n, zt[2i]  , U[i], yr)  # yₖ = ζ₂u₁ + ζ₄u₂ + ••• + ζ₂ₖuₖ
+      end
+
+      # Update inner_itmax, iter, tired and overtimed variables.
+      inner_itmax = inner_itmax - inner_iter
+      iter = iter + inner_iter
+      tired = iter ≥ itmax
+      timer = time_ns() - start_time
+      overtimed = timer > timemax_ns
     end
     (verbose > 0) && @printf(iostream, "\n")
 
-    # Compute zₖ = (ζ₁, ..., ζ₂ₖ) by solving Rₖzₖ = tₖ with backward substitution.
-    for i = 2iter : -1 : 1
-      pos = nr + i - 2iter              # position of rᵢ.ₖ
-      for j = 2iter : -1 : i+1
-        zt[i] = zt[i] - R[pos] * zt[j]  # ζᵢ ← ζᵢ - rᵢ.ⱼζⱼ
-        pos = pos - j + 1               # position of rᵢ.ⱼ₋₁
-      end
-      # Rₖ can be singular if the system is inconsistent
-      if abs(R[pos]) ≤ btol
-        zt[i] = zero(FC)
-        inconsistent = true
-      else
-        zt[i] = zt[i] / R[pos]          # ζᵢ ← ζᵢ / rᵢ.ᵢ
-      end
-    end
+    # Recover the solution in the original variables with the last correction (xr, yr).
+    # x = E xr and y = F yr, accumulated into (x, y) when restart is true.
+    xtmp = EisI ? xr : wB
+    EisI || mulorldiv!(xtmp, E, xr, ldiv)  # xtmp = E xr
+    !EisI && !restart && kcopy!(m, x, xtmp)
+    restart && kaxpy!(m, one(FC), xtmp, x)
 
-    # Compute xₖ and yₖ
-    for i = 1 : iter
-      kaxpy!(m, zt[2i-1], V[i], x)  # xₖ = ζ₁v₁ + ζ₃v₂ + ••• + ζ₂ₖ₋₁vₖ
-      kaxpy!(n, zt[2i]  , U[i], y)  # xₖ = ζ₂u₁ + ζ₄u₂ + ••• + ζ₂ₖuₖ
-    end
-    if !EisI
-      kcopy!(m, wB, x)  # wB ← x
-      mulorldiv!(x, E, wB, ldiv)
-    end
-    if !FisI
-      kcopy!(n, wA, y)  # wA ← y
-      mulorldiv!(y, F, wA, ldiv)
-    end
-    warm_start && kaxpy!(m, one(FC), Δx, x)
-    warm_start && kaxpy!(n, one(FC), Δy, y)
+    ytmp = FisI ? yr : wA
+    FisI || mulorldiv!(ytmp, F, yr, ldiv)  # ytmp = F yr
+    !FisI && !restart && kcopy!(n, y, ytmp)
+    restart && kaxpy!(n, one(FC), ytmp, y)
+
+    warm_start && !restart && kaxpy!(m, one(FC), Δx, x)
+    warm_start && !restart && kaxpy!(n, one(FC), Δy, y)
     workspace.warm_start = false
 
     # Termination status

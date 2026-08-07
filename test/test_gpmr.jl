@@ -292,6 +292,40 @@
       resid = norm(r) / norm(d)
       @test(resid ≤ gpmr_tol)
 
+      # Test restarted GPMR(k)
+      d = [b; c]
+      for restart_mem ∈ (m+n, 3)
+        # Without preconditioner
+        (x, y, stats) = gpmr(A, A', b, c, λ=1.0, μ=-1.0, restart=true, memory=restart_mem, itmax=100)
+        K = [eye(m) A; A' -eye(n)]
+        r = d - K * [x; y]
+        resid = norm(r) / norm(d)
+        @test(resid ≤ gpmr_tol)
+        @test(stats.solved)
+
+        # With left preconditioner
+        (x, y, stats) = gpmr(A, A', b, c, C=M⁻¹, D=N⁻¹, λ=1.0, μ=-1.0, restart=true, memory=restart_mem, itmax=100)
+        K = [M A; A' -N]
+        r = d - K * [x; y]
+        resid = norm(H⁻¹ * r) / norm(H⁻¹ * d)
+        @test(resid ≤ gpmr_tol)
+        @test(stats.solved)
+      end
+
+      # A restart with enough memory performs a single pass and matches restart=false
+      (xr, yr, statsr) = gpmr(A, A', b, c, λ=1.0, μ=-1.0, restart=true,  memory=m+n)
+      (xf, yf, statsf) = gpmr(A, A', b, c, λ=1.0, μ=-1.0, restart=false, memory=m+n)
+      @test(norm([xr; yr] - [xf; yf]) ≤ gpmr_tol * norm([xf; yf]))
+
+      # Restart with a warm-start
+      (x, y, stats) = gpmr(A, A', b, c, λ=1.0, μ=-1.0, restart=true, memory=3, itmax=100)
+      (x, y, stats) = gpmr(A, A', b, c, x, y, λ=1.0, μ=-1.0, restart=true, memory=3, itmax=100)
+      K = [eye(m) A; A' -eye(n)]
+      r = d - K * [x; y]
+      resid = norm(r) / norm(d)
+      @test(resid ≤ gpmr_tol)
+      @test(stats.solved)
+
       # Test dimension of additional vectors
       for transpose ∈ (false, true)
         A, b, c, M, N = small_sqd(transpose, FC=FC)

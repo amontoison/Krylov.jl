@@ -3122,6 +3122,8 @@ mutable struct GpmrWorkspace{T,FC,Sm,Sn} <: _KrylovWorkspace{T,FC,Sm,Sn}
   y          :: Sn
   q          :: Sm
   p          :: Sn
+  br         :: Sm
+  cr         :: Sn
   V          :: Vector{Sm}
   U          :: Vector{Sn}
   gs         :: Vector{FC}
@@ -3149,6 +3151,8 @@ function GpmrWorkspace(kc::KrylovConstructor{Sm,Sn}; memory::Int = 20) where {Sm
   y  = similar(kc.vn)
   q  = similar(kc.vm_empty)
   p  = similar(kc.vn_empty)
+  br = similar(kc.vm_empty)
+  cr = similar(kc.vn_empty)
   V  = Sm[similar(kc.vm) for i = 1 : memory]
   U  = Sn[similar(kc.vn) for i = 1 : memory]
   gs = Vector{FC}(undef, 4 * memory)
@@ -3156,7 +3160,7 @@ function GpmrWorkspace(kc::KrylovConstructor{Sm,Sn}; memory::Int = 20) where {Sm
   zt = Vector{FC}(undef, 2 * memory)
   R  = Vector{FC}(undef, memory * (2 * memory + 1))
   stats = SimpleStats(0, false, false, false, 0, T[], T[], T[], 0.0, 0.0, "unknown")
-  workspace = GpmrWorkspace{T,FC,Sm,Sn}(m, n, wA, wB, dA, dB, Δx, Δy, x, y, q, p, V, U, gs, gc, zt, R, false, stats)
+  workspace = GpmrWorkspace{T,FC,Sm,Sn}(m, n, wA, wB, dA, dB, Δx, Δy, x, y, q, p, br, cr, V, U, gs, gc, zt, R, false, stats)
   workspace.stats.allocation_timer = start_allocation_time |> ktimer
   return workspace
 end
@@ -3176,6 +3180,8 @@ function GpmrWorkspace(m::Integer, n::Integer, Sm::Type, Sn::Type; memory::Int =
   y  = Sn(undef, n)
   q  = Sm(undef, 0)
   p  = Sn(undef, 0)
+  br = Sm(undef, 0)
+  cr = Sn(undef, 0)
   V  = Sm[Sm(undef, m) for i = 1 : memory]
   U  = Sn[Sn(undef, n) for i = 1 : memory]
   gs = Vector{FC}(undef, 4 * memory)
@@ -3185,7 +3191,7 @@ function GpmrWorkspace(m::Integer, n::Integer, Sm::Type, Sn::Type; memory::Int =
   Sm = isconcretetype(Sm) ? Sm : typeof(x)
   Sn = isconcretetype(Sn) ? Sn : typeof(y)
   stats = SimpleStats(0, false, false, false, 0, T[], T[], T[], 0.0, 0.0, "unknown")
-  workspace = GpmrWorkspace{T,FC,Sm,Sn}(m, n, wA, wB, dA, dB, Δx, Δy, x, y, q, p, V, U, gs, gc, zt, R, false, stats)
+  workspace = GpmrWorkspace{T,FC,Sm,Sn}(m, n, wA, wB, dA, dB, Δx, Δy, x, y, q, p, br, cr, V, U, gs, gc, zt, R, false, stats)
   workspace.stats.allocation_timer = start_allocation_time |> ktimer
   return workspace
 end
