@@ -56,6 +56,9 @@ For an in-place variant that reuses memory across solves, see [`diom!`](@ref).
 * `M`: linear operator that models a nonsingular matrix of size `n` used for left preconditioning;
 * `N`: linear operator that models a nonsingular matrix of size `n` used for right preconditioning;
 * `ldiv`: define whether the preconditioners use `ldiv!` or `mul!`;
+* `radius`: add the trust-region constraint `‖x‖ ≤ radius` if `radius > 0`. Only useful for computing a step in a trust-region optimization method when A is Hermitian.
+  If `radius > 0`, and nonpositive curvature is detected along the current search direction, we take the step to the trust-region boundary.
+  When `radius > 0`, we assumes that `A = A*`. In this case, the preconditioners `M` and `N` must be the identity operator;
 * `reorthogonalization`: reorthogonalize the new vectors of the Krylov basis against the `memory` most recent vectors;
 * `atol`: absolute stopping tolerance based on the residual norm;
 * `rtol`: relative stopping tolerance based on the residual norm;
@@ -101,6 +104,7 @@ def_optargs_diom = (:(x0::AbstractVector),)
 def_kwargs_diom = (:(; M = I                            ),
                    :(; N = I                            ),
                    :(; ldiv::Bool = false               ),
+                   :(; radius::T = zero(T)              ),
                    :(; reorthogonalization::Bool = false),
                    :(; atol::T = √eps(T)                ),
                    :(; rtol::T = √eps(T)                ),
@@ -118,7 +122,7 @@ def_kwargs_workspace_diom = extract_parameters.(def_kwargs_workspace_diom)
 
 args_diom = (:A, :b)
 optargs_diom = (:x0,)
-kwargs_diom = (:M, :N, :ldiv, :reorthogonalization, :atol, :rtol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
+kwargs_diom = (:M, :N, :ldiv, :radius, :reorthogonalization, :atol, :rtol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
 kwargs_workspace_diom = (:memory,)
 
 @eval begin
@@ -133,6 +137,7 @@ kwargs_workspace_diom = (:memory,)
     m == n || error("System must be square")
     length(b) == m || error("Inconsistent problem size")
     (verbose > 0) && @printf(iostream, "DIOM: system of size %d\n", n)
+    (FC <: Complex && radius > 0) && error("trust-region constraint is not supported with complex numbers")
 
     # Check M = Iₙ and N = Iₙ
     MisI = (M === I)
@@ -149,21 +154,28 @@ kwargs_workspace_diom = (:memory,)
     L, H, stats = workspace.L, workspace.H, workspace.stats
     warm_start = workspace.warm_start
     rNorms = stats.residuals
+    qxs = stats.qvals
     reset!(stats)
     w  = MisI ? t : workspace.w
     r₀ = MisI ? t : workspace.w
+    
 
-    # Initial solution x₀ and residual r₀.
-    kfill!(x, zero(FC))  # x₀
+    # Initial solution x₀, residual r₀ and q(x₀).
+    kfill!(x, zero(FC))  # x₀ ← 0
     if warm_start
       kmul!(t, A, Δx)
+      (radius > 0) &&  (qx = kdot(n, Δx, t) / 2 - kdot(n, b, Δx))    # q(x₀) = ½ΔxᵀAΔx - bᵀΔx
       kaxpby!(n, one(FC), b, -one(FC), t)
     else
       kcopy!(n, t, b)  # t ← b
+      (radius > 0) && (qx = zero(T))  # Quadratic model value at x₀ = 0
     end
     MisI || mulorldiv!(r₀, M, t, ldiv)  # M(b - Ax₀)
     rNorm = knorm(n, r₀)                # β = ‖r₀‖₂
-    history && push!(rNorms, rNorm)
+    if history
+      push!(rNorms, rNorm)
+      (radius > 0) && push!(qxs, qx)
+    end
     if rNorm == 0
       stats.niter = 0
       stats.solved, stats.inconsistent = true, false
@@ -196,12 +208,13 @@ kwargs_workspace_diom = (:memory,)
 
     # Stopping criterion.
     solved = rNorm ≤ ε
+    on_boundary = false
     tired = iter ≥ itmax
     status = "unknown"
     user_requested_exit = false
     overtimed = false
 
-    while !(solved || tired || user_requested_exit || overtimed)
+    while !(solved || tired || user_requested_exit || overtimed || on_boundary)
 
       # Update iteration index.
       iter = iter + 1
@@ -297,17 +310,54 @@ kwargs_workspace_diom = (:memory,)
         # pₐᵤₓ ← pₐᵤₓ + Nvₖ
         kaxpy!(n, one(FC), z, P[ppos])
       end
-      # pₖ = pₐᵤₓ / uₖ.ₖ
-      kdiv!(n, P[ppos], H[1])
+      # pcg = ξₖ * pₐᵤₓ
+      if radius > 0
+        kscal!(n, ξ, P[ppos])
+      end
+
+      # Compute step size to boundary if applicable.
+      if radius > 0
+        if NisI && MisI
+          σ = maximum(to_boundary(n, x,  P[ppos], z, radius)) 
+        else
+          error("trust-region constraint is not supported with a preconditioner")
+        end
+      end
+
+      # Move along p from x to the boundary if either
+      # the next step leads outside the trust region or
+      # we have nonpositive curvature.
+      if radius > 0
+          indefinite = H[1] ≤ 0
+          stats.indefinite = indefinite
+          on_boundary = indefinite || (H[1] * σ < one(T))
+      end
+      
+      if radius == 0
+        kdiv!(n, P[ppos], H[1])  # pₖ = pₐᵤₓ / uₖ.ₖ
+      elseif on_boundary
+          kscal!(n, σ / ξ, P[ppos])  # pₖ = σ * pcg / ξ
+      else
+          kdiv!(n, P[ppos], ξ * H[1])  # pₖ = pcg / (ξ * uₖ.ₖ)
+      end
+
 
       # Update solution xₖ.
       # xₖ = xₖ₋₁ + ξₖ * pₖ
       kaxpy!(n, ξ, P[ppos], x)
 
       # Compute residual norm.
-      # ‖ M(b - Axₖ) ‖₂ = hₖ₊₁.ₖ * |ξₖ / uₖ.ₖ|
-      rNorm = Haux * abs(ξ / H[1])
-      history && push!(rNorms, rNorm)
+      if !on_boundary
+        rNorm = Haux * abs(ξ / H[1])  # ‖ M(b - Axₖ) ‖₂ = hₖ₊₁.ₖ * |ξₖ / uₖ.ₖ| 
+        (radius > 0) && (qx -= abs(ξ)^2 / abs(H[1]) / 2)  # q(xₖ) = q(xₖ₋₁) -0.5*ξₖ²/uₖ.ₖ
+      else 
+        rNorm = sqrt(abs(rNorm - abs(ξ) * H[1] * σ)^2 + abs(Haux * ξ * σ)^2)  # ‖ M(b - Axₖ) ‖₂ if we hit the boundary
+        qx += (σ^2 / 2) * ξ^2 * H[1] - σ * ξ^2  # q(xₖ) if we hit the boundary
+      end
+      if history
+        push!(rNorms, rNorm)
+        (radius > 0) && push!(qxs, qx)
+      end
 
       # Update stopping criterion.
       user_requested_exit = callback(workspace) :: Bool
@@ -321,6 +371,7 @@ kwargs_workspace_diom = (:memory,)
     (verbose > 0) && @printf(iostream, "\n")
 
     # Termination status
+    on_boundary         && (status = "on trust-region boundary")
     tired               && (status = "maximum number of iterations exceeded")
     solved              && (status = "solution good enough given atol and rtol")
     user_requested_exit && (status = "user-requested exit")
