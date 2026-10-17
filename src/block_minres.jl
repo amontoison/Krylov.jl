@@ -74,22 +74,23 @@ def_args_block_minres = (:(A                    ),
 
 def_optargs_block_minres = (:(X0::AbstractMatrix),)
 
-def_kwargs_block_minres = (:(; M = I                        ),
-                           :(; ldiv::Bool = false           ),
-                           :(; atol::T = √eps(T)            ),
-                           :(; rtol::T = √eps(T)            ),
-                           :(; itmax::Int = 0               ),
-                           :(; timemax::Float64 = Inf       ),
-                           :(; verbose::Int = 0             ),
-                           :(; history::Bool = false        ),
-                           :(; callback = workspace -> false),
-                           :(; iostream::IO = kstdout       ))
+def_kwargs_block_minres = (:(; M = I                          ),
+                           :(; ldiv::Bool = false             ),
+                           :(; complex_symmetric::Bool = false),
+                           :(; atol::T = √eps(T)              ),
+                           :(; rtol::T = √eps(T)              ),
+                           :(; itmax::Int = 0                 ),
+                           :(; timemax::Float64 = Inf         ),
+                           :(; verbose::Int = 0               ),
+                           :(; history::Bool = false          ),
+                           :(; callback = workspace -> false  ),
+                           :(; iostream::IO = kstdout         ))
 
 def_kwargs_block_minres = mapreduce(extract_parameters, vcat, def_kwargs_block_minres)
 
 args_block_minres = (:A, :B)
 optargs_block_minres = (:X0,)
-kwargs_block_minres = (:M, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
+kwargs_block_minres = (:M, :ldiv, :complex_symmetric, :atol, :rtol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
 
 @eval begin
   function block_minres!(workspace :: BlockMinresWorkspace{T,FC,SV,SM}, $(def_args_block_minres...); $(def_kwargs_block_minres...)) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, SV <: AbstractVector{FC}, SM <: AbstractMatrix{FC}}
@@ -182,23 +183,35 @@ kwargs_block_minres = (:M, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :his
       iter = iter + 1
 
       # Continue the block-Lanczos process.
-      mul!(Q, A, Vₖ)                          # Q ← AVₖ
+      if !complex_symmetric
+        mul!(Q, A, Vₖ)                         # Q ← AVₖ
+      else
+        mul!(Q, A, conj(Vₖ))
+      end
       if VERSION ≥ v"1.12" && SM <: Matrix && FC <: BLAS.BlasFloat
         kgemmtr!('L', trans, 'N', γ, Vₖ, Q, ω, Ωₖ)
         for i = 1:p
           for j = i+1:p
-            Ωₖ[i,j] = conj(Ωₖ[j,i])
+            if !complex_symmetric
+              Ωₖ[i,j] = conj(Ωₖ[j,i])
+            else
+              Ωₖ[i,j] = Ωₖ[j,i]
+            end
           end
         end
       else
         mul!(Ωₖ, Vₖ', Q)                      # Ωₖ = Vₖᴴ * Q
       end
-      if SM <: Matrix && FC <: Complex
+      if SM <: Matrix && FC <: Complex && !complex_symmetric
         for i = 1:p
           Ωₖ[i,i] = real(Ωₖ[i,i])
         end
       end
-      (iter ≥ 2) && mul!(Q, Vₖ₋₁, Ψₖ', α, β)  # Q ← Q - Vₖ₋₁ * Ψₖᴴ
+      if !complex_symmetric
+        (iter ≥ 2) && mul!(Q, Vₖ₋₁, Ψₖ', α, β)  # Q ← Q - Vₖ₋₁ * Ψₖᴴ
+      else
+        (iter ≥ 2) && mul!(Q, Vₖ₋₁, transpose(Ψₖ), α, β)  # Q ← Q - Vₖ₋₁ * Ψₖᵀ
+      end
       mul!(Q, Vₖ, Ωₖ, α, β)                   # Q = Q - Vₖ * Ωₖ
 
       # Update the QR factorization of Tₖ₊₁.ₖ = Qₖ [ Rₖ ].
@@ -220,7 +233,7 @@ kwargs_block_minres = (:M, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :his
       # Apply previous Householder reflections Θₖ₋₂.
       if iter ≥ 3
         D1 .= zero(T)
-        D2 .= Ψₖ'
+        D2 .= (!complex_symmetric ? Ψₖ' : transpose(Ψₖ))
         kunmqr!('L', trans, Hₖ₋₂, τₖ₋₂, D, buffer)
         Πₖ₋₂ .= D1
         Γbarₖ₋₁ .= D2
@@ -228,7 +241,7 @@ kwargs_block_minres = (:M, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :his
 
       # Apply previous Householder reflections Θₖ₋₁.
       if iter ≥ 2
-        (iter == 2) && (Γbarₖ₋₁ .= Ψₖ')
+        (iter == 2) && (Γbarₖ₋₁ .= (!complex_symmetric ? Ψₖ' : transpose(Ψₖ)))
         D1 .= Γbarₖ₋₁
         D2 .= Ωₖ
         kunmqr!('L', trans, Hₖ₋₁, τₖ₋₁, D, buffer)
@@ -257,13 +270,21 @@ kwargs_block_minres = (:M, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :his
       # Compute the directions Wₖ, the last columns of Wₖ = Vₖ(Rₖ)⁻¹ ⟷ (Rₖ)ᵀ(Wₖ)ᵀ = (Vₖ)ᵀ
       # w₁Λ₁ = v₁
       if iter == 1
-        wₖ .= Vₖ
+        if !complex_symmetric
+          wₖ .= Vₖ
+        else
+          wₖ .= conj(Vₖ)
+        end
         rdiv!(wₖ, UpperTriangular(Λₖ))
       end
       # w₂Λ₂ = v₂ - w₁Γ₁
       if iter == 2
         @kswap!(wₖ₋₁, wₖ)
-        wₖ .= Vₖ
+        if !complex_symmetric
+          wₖ .= Vₖ
+        else
+          wₖ .= conj(Vₖ)
+        end
         mul!(wₖ, wₖ₋₁, Γₖ₋₁, α, β)
         rdiv!(wₖ, UpperTriangular(Λₖ))
       end
@@ -271,7 +292,11 @@ kwargs_block_minres = (:M, :ldiv, :atol, :rtol, :itmax, :timemax, :verbose, :his
       if iter ≥ 3
         @kswap!(wₖ₋₂, wₖ₋₁)
         @kswap!(wₖ₋₁, wₖ)
-        wₖ .= Vₖ
+        if !complex_symmetric
+          wₖ .= Vₖ
+        else
+          wₖ .= conj(Vₖ)
+        end
         mul!(wₖ, wₖ₋₂, Πₖ₋₂, α, β)
         mul!(wₖ, wₖ₋₁, Γₖ₋₁, α, β)
         rdiv!(wₖ, UpperTriangular(Λₖ))
