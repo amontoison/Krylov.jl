@@ -65,7 +65,7 @@ For matrices $C \in \mathbb{C}^{n \times n} \enspace$ and $\enspace T \in \mathb
 
 ![hermitian_lanczos](./graphics/hermitian_lanczos.png)
 
-After $k$ iterations of the Hermitian Lanczos process, the situation may be summarized as
+After $k$ iterations of the Hermitian Lanczos process applied to a Hermitian matrix $A = A^H$, the situation may be summarized as
 ```math
 \begin{align*}
   A V_k &= V_k T_k + \beta_{k+1} v_{k+1} e_k^T = V_{k+1} T_{k+1,k}, \\
@@ -88,6 +88,39 @@ T_{k+1,k} =
   \beta_{k+1} e_{k}^T
 \end{bmatrix}.
 ```
+
+If $A$ is skew-Hermitian, i.e., $A = -A^H$, the keyword argument `skew_hermitian=true` selects the skew-Hermitian variant of the Hermitian Lanczos process.
+The default is the Hermitian variant.
+In the skew-Hermitian variant, we have $A V_k = V_k T_k - \beta_{k+1} v_{k+1} e_k^T = V_{k+1} T_{k+1,k}$ and $V_k^H V_k = I_k$.
+The tridiagonal matrix $T_k = V_k^H A V_k$ is skew-Hermitian:
+```math
+T_k =
+\begin{bmatrix}
+  \alpha_1  & \beta_2  &          &          \\
+  -\beta_2  & \alpha_2 & \ddots   &          \\
+            & \ddots   & \ddots   & \beta_k  \\
+            &          & -\beta_k & \alpha_k
+\end{bmatrix}
+, \qquad
+T_{k+1,k} =
+\begin{bmatrix}
+  T_{k} \\
+  -\beta_{k+1} e_{k}^T
+\end{bmatrix}.
+```
+The diagonal entries $\alpha_i$ are purely imaginary.
+They are zero if $A$ and $b$ are real.
+The off-diagonal entries $\beta_i$ are real and positive.
+
+The skew-Hermitian variant is related to the Hermitian variant applied to the Hermitian matrix $\mathrm{i}A$.
+Both generate orthonormal bases of $\mathcal{K}_k(A, b) = \mathcal{K}_k(\mathrm{i}A, b)$.
+Let $W_k$ and $\widehat{T}_k$ denote the outputs of the Hermitian variant applied to $\mathrm{i}A$.
+Then
+```math
+V_k = W_k D_k, \qquad T_k = -\mathrm{i} D_k^H \widehat{T}_k D_k, \qquad D_k = \mathrm{diag}(1, \mathrm{i}, \dots, \mathrm{i}^{k-1}).
+```
+The skew-Hermitian variant remains in real arithmetic when $A$ and $b$ are real.
+Applying the Hermitian variant to $\mathrm{i}A$ would require complex arithmetic.
 
 The function [`hermitian_lanczos`](@ref hermitian_lanczos(::Any, ::AbstractVector{FC}, ::Int) where FC <: (Union{Complex{T}, T} where T <: AbstractFloat)) returns $V_{k+1}$, $\beta_1$ and $T_{k+1,k}$.
 
@@ -389,11 +422,35 @@ T_{k+1,k} =
 The tridiagonal matrix $T_k = V_k^H A \bar{V}_k$ is complex symmetric, i.e., $T_k^T = T_k$, with complex diagonal entries and real positive off-diagonal entries.
 The process of Bunse-Gerstner and Stöver is the iterative counterpart of the unitary tridiagonalization used to compute the Takagi factorization $A = V \Sigma V^T$.
 
+If $A$ is complex skew-symmetric, i.e., $A = -A^T$, the keyword argument `skew_symmetric=true` selects the skew-symmetric variant of the Bunse-Gerstner-Stöver process.
+The default is the symmetric variant.
+In the skew-symmetric variant, we have $A \bar{V}_k = V_k T_k - \beta_{k+1} v_{k+1} e_k^T = V_{k+1} T_{k+1,k}$ and $V_k^H V_k = I_k$.
+The tridiagonal matrix $T_k = V_k^H A \bar{V}_k$ is skew-symmetric:
+```math
+T_k =
+\begin{bmatrix}
+  0         & \beta_2  &          &          \\
+  -\beta_2  & 0        & \ddots   &          \\
+            & \ddots   & \ddots   & \beta_k  \\
+            &          & -\beta_k & 0
+\end{bmatrix}
+, \qquad
+T_{k+1,k} =
+\begin{bmatrix}
+  T_{k} \\
+  -\beta_{k+1} e_{k}^T
+\end{bmatrix}.
+```
+The off-diagonal entries $\beta_i$ are real and positive.
+Unlike the skew-Hermitian variant of the Hermitian Lanczos process, the skew-symmetric variant cannot be recovered by applying the symmetric variant to $\mathrm{i}A$.
+The matrix $\mathrm{i}A$ is still skew-symmetric.
+
 The function [`bunse_gerstner_stover`](@ref bunse_gerstner_stover(::Any, ::AbstractVector{FC}, ::Int) where FC <: (Union{Complex{T}, T} where T <: AbstractFloat)) returns $V_{k+1}$, $\beta_1$ and $T_{k+1,k}$.
 
 !!! note
-    The Bunse-Gerstner-Stöver process is equivalent to the Saunders-Simon-Yip process applied to $A = A^T$ with $c = \bar{b}$, for which $U_k = \bar{V}_k$ and $\gamma_i = \beta_i$, at half the cost.
-    If $A$ and $b$ are real, it reduces to the Hermitian Lanczos process.
+    The symmetric variant of the Bunse-Gerstner-Stöver process is equivalent to the Saunders-Simon-Yip process applied to $A = A^T$ with $c = \bar{b}$, at half the cost.
+    In that case, $U_k = \bar{V}_k$ and $\gamma_i = \beta_i$.
+    If $A$ and $b$ are real, the symmetric and skew-symmetric variants reduce to the Hermitian and skew-Hermitian variants of the Hermitian Lanczos process.
 
 ```@docs
 bunse_gerstner_stover(::Any, ::AbstractVector{FC}, ::Int) where FC <: (Union{Complex{T}, T} where T <: AbstractFloat)
